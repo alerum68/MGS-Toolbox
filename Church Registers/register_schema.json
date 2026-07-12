@@ -1,0 +1,91 @@
+{
+  "type": "object",
+  "properties": {
+    "register_title": { "type": "string" },
+    "sheets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "page_id": { "type": "string" },
+          "document_metadata": {
+            "type": "object",
+            "properties": {
+              "file_name": { "type": "string" },
+              "file_type": { "type": "string" },
+              "volume": { "type": "string" },
+              "pages": { "type": "string" },
+              "church_name": { "type": "string" },
+              "location": { "type": "string" }
+            }
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "record_id": { "type": "string" },
+                "page": { "type": "string" },
+                "record_number": { "type": "string" },
+                "record_type_code": { "type": "string" },
+                "event_type": { "type": "string" },
+                "year": { "type": "string" },
+                "event_date": { "type": "string" },
+                "event_place": { "type": "string", "nullable": true },
+                "english_translation": { "type": "string" },
+                "original_transcription": { "type": "string" },
+                "review": {
+                  "type": "boolean",
+                  "description": "True if any part of this record (dates, place, transcription, translation, or any participant) is uncertain, guessed, illegible, or otherwise needs a human to double-check it."
+                },
+                "review_reason": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Short plain-English note (under 15 words) explaining why this record needs review. Null if review is false."
+                },
+                "participants": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "role_number": { "type": "string" },
+                      "role_name": { "type": "string" },
+                      "std_given": { "type": "string" },
+                      "std_surname": { "type": "string", "nullable": true },
+                      "raw_given": { "type": "string", "nullable": true },
+                      "raw_surname": { "type": "string", "nullable": true },
+                      "dit_name": { "type": "string", "nullable": true },
+                      "prefix": { "type": "string", "nullable": true },
+                      "suffix": { "type": "string", "nullable": true },
+                      "sex": { "type": "string" },
+                      "is_priest": { "type": "boolean" },
+                      "age": { "type": "string", "nullable": true },
+                      "occupation": { "type": "string", "nullable": true },
+                      "race": { "type": "string", "nullable": true },
+                      "religion": { "type": "string", "nullable": true },
+                      "residence": { "type": "string", "nullable": true },
+                      "birth_date": { "type": "string", "nullable": true },
+                      "birth_place": { "type": "string", "nullable": true },
+                      "death_date": { "type": "string", "nullable": true },
+                      "death_place": { "type": "string", "nullable": true },
+                      "review": {
+                        "type": "boolean",
+                        "description": "True if THIS participant's own data (name reading, dates, role assignment, etc.) is uncertain, guessed, illegible, or otherwise needs a human to double-check it."
+                      },
+                      "review_reason": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Short plain-English note (under 15 words) explaining why this participant needs review. Null if review is false."
+                      }
+                    },
+                    "required": ["role_number", "role_name", "std_given", "is_priest"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
