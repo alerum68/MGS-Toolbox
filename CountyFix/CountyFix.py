@@ -71,6 +71,7 @@ DATE_PATTERN_T_YEAR = re.compile(r'(\d{4})')
 
 # A comprehensive set of states/territories to prevent them from being
 # accidentally parsed as local cities.
+# noinspection SpellCheckingInspection
 US_STATES = {
     "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
     "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
@@ -435,8 +436,8 @@ def main() -> None:
             local_city = extract_local_parts(current_name)
             county_val = clean_shapefile_name(matched.iloc[0]['NAME'])
             state_val = clean_shapefile_name(matched.iloc[0]['STATE_TERR'])
-
-            final_county = ""
+            
+            # Determine final_county assignment based on logic
             lower_county = county_val.lower()
             pseudo_keywords = [
                 'territory', 'unorganized', 'nca', 'de facto', 'new pur',
@@ -448,6 +449,7 @@ def main() -> None:
             elif any(kw in lower_county for kw in pseudo_keywords):
                 final_county = county_val
             else:
+                # noinspection SpellCheckingInspection
                 if state_val.lower() == "louisiana":
                     final_county = f"{county_val} Parish"
                 else:
@@ -468,8 +470,8 @@ def main() -> None:
                 new_place_id = clone_historical_place(
                     cursor, place_id, new_place_name, place_table_columns
                 )
-
-                new_site_id = 0
+                
+                # Fetch or use site ID
                 if site_id and site_id > 0 and detail_name:
                     new_site_id = get_or_create_place_detail(
                         cursor, new_place_id, detail_name, site_id,
@@ -508,4 +510,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    

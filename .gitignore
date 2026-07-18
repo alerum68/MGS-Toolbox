@@ -1,24 +1,25 @@
 *.env
-/Church Registers/JSON/
+/ChurchRegisters/JSON/
 /.idea/
-/County Fix/US_AtlasHCB_Counties/
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Metadata/
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/
-/County Fix/US_AtlasHCB_Counties/zCreativeCommonsLicense/
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_READ_ME.htm
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Metadata/US_HistCounties_Metadata1.htm
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Metadata/US_HistCounties_Metadata2.htm
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.dbf
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.END_DATE.atx
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.END_N.atx
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.ID_NUM.atx
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.prj
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.sbn
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.sbx
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.shp
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.shp.xml
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.shx
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.START_DATE.atx
-/County Fix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.START_N.atx
-/County Fix/US_AtlasHCB_Counties/zCreativeCommonsLicense/CreativeCommonsDeed_files/
-/County Fix/US_AtlasHCB_Counties/zCreativeCommonsLicense/CreativeCommonsDeed.htm
+/CountyFix/US_AtlasHCB_Counties/
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Metadata/
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/
+/CountyFix/US_AtlasHCB_Counties/zCreativeCommonsLicense/
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_READ_ME.htm
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Metadata/US_HistCounties_Metadata1.htm
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Metadata/US_HistCounties_Metadata2.htm
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.dbf
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.END_DATE.atx
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.END_N.atx
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.ID_NUM.atx
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.prj
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.sbn
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.sbx
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.shp
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.shp.xml
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.shx
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.START_DATE.atx
+/CountyFix/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.START_N.atx
+/CountyFix/US_AtlasHCB_Counties/zCreativeCommonsLicense/CreativeCommonsDeed_files/
+/CountyFix/US_AtlasHCB_Counties/zCreativeCommonsLicense/CreativeCommonsDeed.htm
+/identifier.sqlite

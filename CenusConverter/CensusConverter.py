@@ -13,7 +13,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -69,7 +69,6 @@ CURRENT_DATE = datetime.now().strftime('%d %b %Y').upper()
 LOC = f"{TOWNSHIP}, {COUNTY}, {STATE}".strip(", ")
 BASE_ID = ANCESTRY_IMAGE_BASE_ID.rstrip('_-')
 
-
 # ==========================================
 # Directories & Output
 # ==========================================
@@ -121,47 +120,33 @@ WIFE_CHILD_AGE_GAP = (
 )
 REVIEW_THRESHOLD = 0.6
 
-
 # ==========================================
 # HELPER FUNCTIONS
 # ==========================================
-def clean_str(val: Any) -> str:
+def clean_str(val: Union[str, int, float, None]) -> str:
     """
     Ensure the value is a cleanly formatted string or an empty string.
-
-    Args:
-        val: The value to clean (e.g., from a pandas DataFrame cell).
-
-    Returns:
-        The stripped string representation of the value, or an empty string if
-        the value is NaN or None.
-
-    Raises:
-        TypeError: If the input is a pandas Series instead of a scalar.
+    Strictly accepts primitives to prevent IDE warnings about missing __str__.
     """
-    if isinstance(val, pd.Series):
-        raise TypeError(
-            "clean_str() received a pandas Series instead of a scalar value."
-        )
-    return str(val).strip() if pd.notna(val) else ""
+    if val is None or pd.isna(val):
+        return ""
+    return str(val).strip()
 
 
 def get_gender(val: Any) -> str:
     """
     Parse the gender value and return a standardized 'M', 'F', or 'U'.
-
-    Args:
-        val: The gender value (string) or a pandas Series/dict containing a
-            'Gender' key.
-
-    Returns:
-        'M' for male, 'F' for female, or 'U' for unknown.
+    Safely unpacks pandas Series objects before attempting string conversion.
     """
-    # If the input is a Series or dict, attempt to extract the 'Gender' key.
-    if isinstance(val, pd.Series) or isinstance(val, dict):
-        val = val.get("Gender", "")
+    if isinstance(val, (pd.Series, dict)):
+        raw_val = val.get("Gender", "")
+    else:
+        raw_val = val
     
-    v = clean_str(val).upper()
+    if pd.isna(raw_val) or raw_val is None:
+        return "U"
+    
+    v = str(raw_val).strip().upper()
     if v.startswith(("M", "MALE")):
         return "M"
     elif v.startswith(("F", "FEMALE")):
@@ -175,18 +160,14 @@ def get_age(row: pd.Series) -> float:
 
     Attempts to calculate age from 'Birth Year' and 'CENSUS_YEAR', falling back
     to the 'Age' column if calculation fails.
-
-    Args:
-        row: A pandas Series representing a row of census data for an individual.
-
-    Returns:
-        The calculated or parsed age as a float, or -1.0 if no valid age data
-        is found.
     """
-    def parse_num(val: Any) -> Optional[float]:
+    
+    def parse_num(val: Union[str, int, float, None]) -> Optional[float]:
         try:
-            if pd.notna(val) and str(val).strip():
-                return float(val)
+            if pd.notna(val) and val is not None:
+                val_str = str(val).strip()
+                if val_str:
+                    return float(val_str)
         except ValueError:
             pass
         return None
@@ -200,25 +181,11 @@ def get_age(row: pd.Series) -> float:
     age = parse_num(row.get('Age'))
     return age if age is not None else -1.0
 
-
 def spouse_evaluation(
     a: pd.Series, b: pd.Series
 ) -> Tuple[bool, float, str]:
     """
     Evaluate if two individuals are plausibly spouses.
-
-    Uses heuristics based on gender mismatch, age, and surname to determine
-    if a spousal relationship is likely.
-
-    Args:
-        a: Data row for the first individual.
-        b: Data row for the second individual.
-
-    Returns:
-        A tuple containing:
-            - A boolean indicating if they are plausible spouses.
-            - A confidence score (0.0 to 1.0).
-            - A string describing the reason for the evaluation.
     """
     g_a = get_gender(a.get('Gender', ''))
     g_b = get_gender(b.get('Gender', ''))
@@ -250,28 +217,14 @@ def spouse_evaluation(
     return True, 0.4, "surname missing for one party -- unverified pairing"
 
 
-# noinspection GrazieInspection
 def child_evaluation(
     unit: Dict[str, Any], member: pd.Series
 ) -> Tuple[bool, float, str]:
     """
     Evaluate if a member is plausibly a child of the given family unit.
-
-    Examines age gaps between the member and potential parents in the unit,
-    as well as surname matches.
-
-    Args:
-        unit: A dictionary representing a family unit (must have 'husband'
-            and 'wife' keys, which can be None).
-        member: Data row for the potential child.
-
-    Returns:
-        A tuple containing:
-            - A boolean indicating if the member is plausibly a child.
-            - A confidence score (0.0 to 1.0).
-            - A string describing the reason for the evaluation.
     """
-    h, w = unit.get('husband'), unit.get('wife')
+    h: Optional[pd.Series] = unit.get('husband')
+    w: Optional[pd.Series] = unit.get('wife')
     
     # Cannot be a child if there are no parents
     if h is None and w is None:
@@ -326,54 +279,32 @@ def child_evaluation(
             
     return True, surname_conf, "age and surname consistent with parentage"
 
-
 def find_parent(
     units: List[Dict[str, Any]], member: pd.Series
 ) -> Optional[Tuple[int, float, str]]:
     """
     Find the best matching parent unit for a child from a list of units.
-
-    Iterates through family units in reverse order (to prefer more recently
-    formed units) and finds the one with the highest confidence score for
-    the potential child.
-
-    Args:
-        units: A list of dictionaries representing constructed family units.
-        member: Data row for the potential child.
-
-    Returns:
-        A tuple containing the index of the best unit, the confidence score,
-        and the reason, or None if no plausible unit is found.
     """
-    best = None
+    best: Optional[Tuple[int, float, str]] = None
     # Iterate backwards through units to match with the most recent family first
     for i in range(len(units) - 1, -1, -1):
-        plausible, confidence, reason = child_evaluation(units[i], member)
-        if plausible and (best is None or confidence > best[1]):
-            best = (i, confidence, reason)
+        plausible, match_conf, match_rsn = child_evaluation(units[i], member)
+        if plausible:
+            if best is None:
+                best = (i, match_conf, match_rsn)
+            else:
+                _, best_conf, _ = best
+                # Explicit unpacking avoids __getitem__ warnings on Optional types
+                if match_conf > best_conf:
+                    best = (i, match_conf, match_rsn)
     return best
 
 
-# noinspection GrazieInspection
 def parse_household(
     group: pd.DataFrame
 ) -> Tuple[List[Dict[str, Any]], List[pd.Series], List[Dict[str, Any]]]:
     """
     Parse a household group into distinct family units and unrelated members.
-
-    This function applies heuristics to group household members into family
-    structures (parents and children), flags individuals who don't fit
-    cleanly, and identifies unrelated individuals.
-
-    Args:
-        group: A pandas DataFrame containing rows for a single household.
-
-    Returns:
-        A tuple containing:
-            - A list of family unit dictionaries.
-            - A list of data rows for unrelated individuals.
-            - A list of dictionaries containing review flags for specific
-              individuals.
     """
     members = [row for _, row in group.iterrows()]
     n = len(members)
@@ -381,24 +312,22 @@ def parse_household(
     units: List[Dict[str, Any]] = []
     unrelated: List[pd.Series] = []
     consumed = set()
-
-    def add_flag(person: pd.Series, reason: str, confidence: float) -> None:
+    
+    def add_flag(person: pd.Series, flag_reason: str, flag_conf: float) -> None:
         """Helper to append a review flag if confidence is below threshold."""
-        if confidence < REVIEW_THRESHOLD:
-            flags.append(
-                {'person': person, 'reason': reason, 'confidence': confidence}
+        if flag_conf < REVIEW_THRESHOLD:
+            flags.append({'person': person, 'reason': flag_reason, 'confidence': flag_conf}
             )
 
-    def make_unit(
-        m1: pd.Series, m2: Optional[pd.Series] = None, anchor: Optional[pd.Series] = None
+    def make_unit(mem1: pd.Series, mem2: Optional[pd.Series] = None, anchor_person: Optional[pd.Series] = None
     ) -> Dict[str, Any]:
         """Helper to construct a new family unit dictionary."""
-        m1_gen = get_gender(m1)
-        h, w = (None, m1) if m1_gen == 'F' else (m1, None)
-        if m2 is not None:
-            # If m1 is female, m2 must be the husband, else m2 is the wife
-            h, w = (m2, m1) if m1_gen == 'F' else (m1, m2)
-        return {'husband': h, 'wife': w, 'children': [], 'anchor': anchor}
+        m1_gen = get_gender(mem1)
+        h_unit, w_unit = (None, mem1) if m1_gen == 'F' else (mem1, None)
+        if mem2 is not None:
+            # If mem1 is female, mem2 must be the husband, else mem2 is the wife
+            h_unit, w_unit = (mem2, mem1) if m1_gen == 'F' else (mem1, mem2)
+        return {'husband': h_unit, 'wife': w_unit, 'children': [], 'anchor': anchor_person}
 
     if not members:
         return units, unrelated, flags
@@ -408,22 +337,21 @@ def parse_household(
     
     # Process the head of household and potential spouse
     if n > 1:
-        m1 = members[1]
-        plausible, confidence, reason = spouse_evaluation(head, m1)
+        sp_mem = members[1]
+        plausible, sp_conf, sp_reason = spouse_evaluation(head, sp_mem)
         head_gender = get_gender(head)
-        m1_gender = get_gender(m1)
+        sp_gender = get_gender(sp_mem)
         
         # Check for step-parent pattern if they are not plausible spouses initially
-        if not plausible and head_gender != m1_gender and \
-           'U' not in (head_gender, m1_gender):
-            m1_age = get_age(m1)
-            # If m1 is older than other members, they might be a step-parent
-            if m1_age != -1 and any(get_age(x) > m1_age for x in members[2:]):
-                plausible, confidence, reason = True, 0.8, "step-parent pattern"
+        if not plausible and head_gender != sp_gender and 'U' not in (head_gender, sp_gender):
+            sp_age = get_age(sp_mem)
+            # If sp_mem is older than other members, they might be a step-parent
+            if sp_age != -1 and any(get_age(x) > sp_age for x in members[2:]):
+                plausible, sp_conf, sp_reason = True, 0.8, "step-parent pattern"
                 
         if plausible:
-            units.append(make_unit(head, m1))
-            add_flag(m1, f"Possible spouse: {reason}", confidence)
+            units.append(make_unit(head, sp_mem))
+            add_flag(sp_mem, f"Possible spouse: {sp_reason}", sp_conf)
             consumed.update({0, 1})
             i = 2
 
@@ -443,20 +371,25 @@ def parse_household(
         # Check if the current and next member form a sub-family (e.g., married child)
         if i + 1 < n and (i + 1) not in consumed:
             nxt = members[i + 1]
-            plausible, sp_conf, sp_reason = spouse_evaluation(m, nxt)
+            sub_plausible, sub_sp_conf, _ = spouse_evaluation(m, nxt)
             
-            if plausible:
+            if sub_plausible:
                 fit_m = find_parent(units, m)
                 fit_nxt = find_parent(units, nxt)
-                m_is_child = (fit_m and fit_m[1] >= REVIEW_THRESHOLD)
-                nxt_is_child = (fit_nxt and fit_nxt[1] >= REVIEW_THRESHOLD)
+                
+                m_is_child = False
+                m_unit_idx = -1
+                if fit_m is not None:
+                    m_unit_idx, m_conf, _ = fit_m
+                    m_is_child = (m_conf >= REVIEW_THRESHOLD)
+                
+                nxt_is_child = False
+                if fit_nxt is not None:
+                    _, nxt_conf, _ = fit_nxt
+                    nxt_is_child = (nxt_conf >= REVIEW_THRESHOLD)
 
                 # Both appear to be children (e.g., siblings married to each other - unlikely, or just siblings)
                 if m_is_child and nxt_is_child:
-                    # Type checking assertion for mypy/linter
-                    assert fit_m is not None
-                    
-                    m_unit_idx = fit_m[0]
                     m_unit = units[m_unit_idx]
                     
                     last_c_age = -1
@@ -470,14 +403,14 @@ def parse_household(
                        m_age > last_c_age and m_age >= MIN_MARRIAGE_AGE:
                         # Determine which one carries the family surname
                         if clean_str(m.get('Surname')) == clean_str(head.get('Surname')):
-                            anchor = m
+                            anc_member = m
                         else:
-                            anchor = nxt
-                            
-                        units[m_unit_idx]['children'].append(anchor)
-                        units.append(make_unit(m, nxt, anchor=anchor))
+                            anc_member = nxt
                         
-                        flagged_person = nxt if anchor is m else m
+                        units[m_unit_idx]['children'].append(anc_member)
+                        units.append(make_unit(m, nxt, anchor_person=anc_member))
+                        
+                        flagged_person = nxt if anc_member is m else m
                         add_flag(
                             flagged_person,
                             "Paired as spouse due to age-sequence break.",
@@ -493,16 +426,18 @@ def parse_household(
                     
                 # One of them is a child of the main unit, bringing a spouse
                 elif m_is_child or nxt_is_child:
-                    if m_is_child:
-                        assert fit_m is not None
-                        anchor, (anchor_idx, anchor_conf, anchor_reason) = m, fit_m
+                    if m_is_child and fit_m is not None:
+                        anc_member = m
+                        anchor_idx, anchor_conf, anchor_rsn = fit_m
+                    elif fit_nxt is not None:
+                        anc_member = nxt
+                        anchor_idx, anchor_conf, anchor_rsn = fit_nxt
                     else:
-                        assert fit_nxt is not None
-                        anchor, (anchor_idx, anchor_conf, anchor_reason) = nxt, fit_nxt
-                        
-                    units[anchor_idx]['children'].append(anchor)
-                    add_flag(anchor, f"Possible child: {anchor_reason}", anchor_conf)
-                    units.append(make_unit(m, nxt, anchor=anchor))
+                        continue  # Defensive fallback
+                    
+                    units[anchor_idx]['children'].append(anc_member)
+                    add_flag(anc_member, f"Possible child: {anchor_rsn}", anchor_conf)
+                    units.append(make_unit(m, nxt, anchor_person=anc_member))
                     consumed.update({i, i + 1})
                     i += 2
                     continue
@@ -510,9 +445,9 @@ def parse_household(
         # Try to find a parent for the current member
         match = find_parent(units, m)
         if match:
-            idx, confidence, reason = match
+            idx, match_conf, match_rsn = match
             units[idx]['children'].append(m)
-            add_flag(m, f"Possible child: {reason}", confidence)
+            add_flag(m, f"Possible child: {match_rsn}", match_conf)
         else:
             # If no parent found, check for surname match with head
             m_sur = clean_str(m.get('Surname'))
@@ -530,7 +465,6 @@ def parse_household(
         
     return units, unrelated, flags
 
-
 # ==========================================
 # GEDCOM BUILDER
 # ==========================================
@@ -538,23 +472,11 @@ def build_citation_block(
     row: pd.Series,
     rec_id: int,
     m_id: str,
-    image_name: str,
     real_page: str,
     target_software: str
 ) -> List[str]:
     """
     Construct the GEDCOM source citation block tailored to RM or FTM format.
-
-    Args:
-        row: The pandas Series representing the individual's data row.
-        rec_id: The integer ID assigned to the individual record.
-        m_id: The media object ID string.
-        image_name: The name of the image file.
-        real_page: The parsed real page number.
-        target_software: Either "RM" for RootsMagic or "FTM" for Family Tree Maker.
-
-    Returns:
-        A list of strings representing the GEDCOM citation lines.
     """
     giv = clean_str(row.get('Given Name'))
     sur = clean_str(row.get('Surname'))
@@ -597,15 +519,6 @@ def build_citation_block(
 def get_census_notes(row: pd.Series) -> List[str]:
     """
     Extract special census columns into a list of notes.
-
-    Includes formatting condition flags specific to certain census years,
-    such as the 1870 census.
-
-    Args:
-        row: The pandas Series representing the individual's data row.
-
-    Returns:
-        A list of string notes describing special conditions or values.
     """
     note_cols = [
         'Quality', 'Real Estate Value', 'Personal Estate Value',
@@ -629,49 +542,24 @@ def get_census_notes(row: pd.Series) -> List[str]:
             'Voting Rights Denied': "Male citizen of 21 years of age and upwards whose right to vote is denied or abridged on grounds other than rebellion or other crime."
         }
         
-        notes.extend([
-            msg for col, msg in flags.items()
-            if clean_str(row.get(col))
+        notes.extend([msg for flag_col, msg in flags.items() if clean_str(row.get(flag_col))
         ])
         
     return notes
 
 
-# noinspection GrazieInspection
 def build_relationship_task(
-    row: pd.Series,
     rec_id: int,
     giv: str,
     sur: str,
     record_label: str,
     reasons: List[Tuple[str, float]],
-    m_id: str,
     citation_block: List[str],
     media_path: str | Path,
     media_title: str
 ) -> Tuple[List[str], str]:
     """
     Build a custom task block for manual review.
-
-    This function attaches flags, links the task to the individual, and ensures
-    level-shift consistency on citation blocks so they parse cleanly in RootsMagic.
-
-    Args:
-        row: The individual's data row.
-        rec_id: The individual's record ID.
-        giv: Given name.
-        sur: Surname.
-        record_label: A descriptive label for the record.
-        reasons: A list of tuples containing the review reason and confidence.
-        m_id: Media ID associated with the task.
-        citation_block: The base citation block to adapt for the task.
-        media_path: Path to the media file.
-        media_title: Title for the media file.
-
-    Returns:
-        A tuple containing:
-            - A list of GEDCOM strings representing the task block.
-            - A string representing the folder name for categorizing the task.
     """
     task_id = f"@T{rec_id}@"
     summary = "; ".join(r for r, _ in reasons)
@@ -725,16 +613,9 @@ def build_relationship_task(
     
     return task_records, folder_name
 
-
 def get_master_sources(target_software: str) -> List[str]:
     """
     Generate the master source blocks dependent on the chosen software type.
-
-    Args:
-        target_software: "RM" or "FTM".
-
-    Returns:
-        A list of strings representing the GEDCOM master source definitions.
     """
     if target_software == "RM":
         # RootsMagic master sources use custom template (_TMPLT) tags
@@ -788,14 +669,6 @@ def get_master_sources(target_software: str) -> List[str]:
 def build_gedcom(df: pd.DataFrame, target_software: str) -> None:
     """
     Main builder orchestrating the conversion from DataFrame to GEDCOM.
-
-    Constructs the GEDCOM header, iterates through the parsed families and
-    individuals to build their respective records, appends media and source
-    definitions, and writes the final string to a file.
-
-    Args:
-        df: The pandas DataFrame containing the cleaned census data.
-        target_software: The target software format ("RM" or "FTM").
     """
     # Initialize the GEDCOM header
     ged = [
@@ -836,20 +709,23 @@ def build_gedcom(df: pd.DataFrame, target_software: str) -> None:
         
         # Store review flags indexed by the individual's DataFrame index
         for flag in flags:
-            person_idx = flag['person'].name
-            review_flags.setdefault(person_idx, []).append(
-                (flag['reason'], flag['confidence'])
-            )
+            flag_person: Optional[pd.Series] = flag.get('person')
+            if flag_person is not None:
+                person_idx = flag_person.name
+                review_flags.setdefault(person_idx, []).append((flag['reason'], flag['confidence']))
             
         for person in unrelated:
             review_flags.setdefault(person.name, [])
 
         # Build Family (FAM) records for each inferred unit
         for u in units:
-            h, w, c, anc = u['husband'], u['wife'], u['children'], u['anchor']
+            h: Optional[pd.Series] = u.get('husband')
+            w: Optional[pd.Series] = u.get('wife')
+            children_list: List[pd.Series] = u.get('children', [])
+            anc: Optional[pd.Series] = u.get('anchor')
             
             # Determine the anchor individual to base the family ID on
-            anchor_row = h if h is not None else (w if w is not None else anc)
+            anchor_row: Optional[pd.Series] = h if h is not None else (w if w is not None else anc)
             if anchor_row is None:
                 continue
                 
@@ -869,7 +745,7 @@ def build_gedcom(df: pd.DataFrame, target_software: str) -> None:
                 fam_links[w.name].append(f"1 FAMS {f_id}")
                 
             # Add Children links
-            for child in c:
+            for child in children_list:
                 c_id = ANCESTRY_START_RECORD_ID + child.name
                 fam_blocks.append(f"1 CHIL @I{c_id}@")
                 fam_links[child.name].append(f"1 FAMC {f_id}")
@@ -900,8 +776,7 @@ def build_gedcom(df: pd.DataFrame, target_software: str) -> None:
                 'title': f"{CENSUS_YEAR} Census, {COUNTY}, Page {real_page}"
             }
 
-        cit = build_citation_block(
-            row, rec_id, m_id, image_name, real_page, target_software
+        cit = build_citation_block(row, rec_id, m_id, real_page, target_software
         )
         
         # Start individual record
@@ -918,17 +793,15 @@ def build_gedcom(df: pd.DataFrame, target_software: str) -> None:
         if person_flags := review_flags.get(idx, []):
             if target_software == "RM":
                 lbl = f"{CENSUS_YEAR}, Fam {clean_str(row.get('Family Number'))}, p.{real_page}"
-                task_records, folder = build_relationship_task(
-                    row, rec_id, giv, sur, lbl, person_flags, m_id, cit,
+                task_records, folder = build_relationship_task(rec_id, giv, sur, lbl, person_flags, cit,
                     media_dict[page]['img'], media_dict[page]['title']
                 )
                 task_blocks.extend(task_records)
                 folder_tasks.setdefault(folder, []).append(f"1 _TASK @T{rec_id}@")
                 ged.extend([f"1 _TASK @T{rec_id}@", f"1 _COLOR {REVIEW_COLOR}"])
             else:
-                for reason, confidence in person_flags:
-                    ged.extend([
-                        f"1 NOTE NEEDS REVIEW ({confidence:.0%} confidence): {reason}"
+                for rev_reason, rev_conf in person_flags:
+                    ged.extend([f"1 NOTE NEEDS REVIEW ({rev_conf:.0%} confidence): {rev_reason}"
                     ])
 
         # Add birth information
@@ -1052,9 +925,9 @@ if __name__ == "__main__":
     census_df = pd.read_csv(INPUT_CSV)
 
     # Ensure necessary columns are numeric if they exist
-    for col in ['Age', 'Birth Year']:
-        if col in census_df.columns:
-            census_df[col] = pd.to_numeric(census_df[col], errors='coerce')
+    for numeric_col in ['Age', 'Birth Year']:
+        if numeric_col in census_df.columns:
+            census_df[numeric_col] = pd.to_numeric(census_df[numeric_col], errors='coerce')
 
     # Build files for both targeted software types
     for software in ["RM", "FTM"]:

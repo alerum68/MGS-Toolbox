@@ -5,12 +5,10 @@ Reads a RootsMagic 11 (.rmtree) SQLite database, uses fuzzy matching to find
 duplicates, and directly creates Task and Folder records in the database.
 """
 
-import os
 import sqlite3
-import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 from thefuzz import fuzz
@@ -46,7 +44,7 @@ def rmnocase(s1: Optional[str], s2: Optional[str]) -> int:
     """
     Mock collation sequence for RootsMagic's custom RMNOCASE.
     
-    Provides case-insensitive sorting compatible with RootsMagic's internal 
+    Provides case-insensitive sorting compatible with RootsMagic's internal
     expectations to prevent SQLite operational errors.
 
     Args:
@@ -65,15 +63,15 @@ def rmnocase(s1: Optional[str], s2: Optional[str]) -> int:
 
 def extract_people_from_rm(db_path: str) -> pd.DataFrame:
     """
-    Connects to the RM 11 SQLite database and extracts primary names, 
-    birth years, and a list of immediate family members to provide context 
+    Connects to the RM 11 SQLite database and extracts primary names,
+    birth years, and a list of immediate family members to provide context
     for deduplication.
 
     Args:
         db_path (str): The absolute path to the RootsMagic database.
 
     Returns:
-        pd.DataFrame: A DataFrame containing cleaned person records and 
+        pd.DataFrame: A DataFrame containing cleaned person records and
                       their associated relative names.
                       
     Raises:
@@ -89,7 +87,7 @@ def extract_people_from_rm(db_path: str) -> pd.DataFrame:
     conn.create_collation("RMNOCASE", rmnocase)
     
     query = """
-        SELECT 
+            SELECT
             OwnerID AS PersonID,
             Given,
             Surname,
@@ -101,11 +99,14 @@ def extract_people_from_rm(db_path: str) -> pd.DataFrame:
     df = pd.read_sql_query(query, conn)
     
     # Clean and standardize the extracted text data
+    # noinspection PyUnresolvedReferences
     df['Given'] = df['Given'].fillna('').astype(str).str.strip()
+    # noinspection PyUnresolvedReferences
     df['Surname'] = df['Surname'].fillna('').astype(str).str.strip()
     df['FullName'] = df['Given'] + " " + df['Surname']
     
     # Coerce birth years to integers, defaulting to 0 for unknown
+    # noinspection PyUnresolvedReferences
     df['BirthYear'] = (
         pd.to_numeric(df['BirthYear'], errors='coerce')
         .fillna(0)
@@ -120,7 +121,7 @@ def extract_people_from_rm(db_path: str) -> pd.DataFrame:
         # 1. Spouses (Couples)
         couples_df = pd.read_sql_query(
             "SELECT FatherID, MotherID FROM FamilyTable "
-            "WHERE FatherID > 0 AND MotherID > 0", 
+            "WHERE FatherID > 0 AND MotherID > 0",
             conn
         )
         for _, row in couples_df.iterrows():
@@ -158,9 +159,7 @@ def extract_people_from_rm(db_path: str) -> pd.DataFrame:
     
     # Build a list of relatives' names for each person
     df['RelativesList'] = df['PersonID'].map(
-        lambda pid: [
-            id_to_name.get(rid) 
-            for rid in relatives_map.get(pid, set()) 
+        lambda pid: [id_to_name.get(rid) for rid in relatives_map.get(pid, set())
             if id_to_name.get(rid)
         ]
     )
@@ -175,20 +174,43 @@ def extract_people_from_rm(db_path: str) -> pd.DataFrame:
 # ==========================================
 # 2. FUZZY MATCHING
 # ==========================================
-def find_fuzzy_duplicates(
-    df: pd.DataFrame, 
-    run_pass_two: bool = False, 
+def _evaluate_family_context(p1_rels: list, p2_rels: list) -> Tuple[bool, bool]:
+	"""
+	Evaluates family context to prevent false positives.
+	Returns a tuple of (family_match, family_conflict).
+	"""
+	family_match = False
+	family_conflict = False
+	
+	if p1_rels and p2_rels:
+		for r1 in p1_rels:
+			for r2 in p2_rels:
+				if fuzz.token_set_ratio(r1, r2) >= FAMILY_MATCH_THRESHOLD:
+					family_match = True
+					break
+			if family_match:
+				break
+		
+		if not family_match:
+			# They both have relatives, but none match.
+			# High chance of false positive!
+			family_conflict = True
+	
+	return family_match, family_conflict
+
+
+def find_fuzzy_duplicates(df: pd.DataFrame, run_pass_two: bool = False,
     test_limit: Optional[int] = None
 ) -> pd.DataFrame:
     """
-    Uses fuzzy string matching to find individuals with similar names and 
-    birth years. Optimized by converting DataFrames to dictionaries for faster 
+    Uses fuzzy string matching to find individuals with similar names and
+    birth years. Optimized by converting DataFrames to dictionaries for faster
     O(N^2) traversal.
 
     Args:
         df (pd.DataFrame): The DataFrame of extracted person records.
         run_pass_two (bool): Whether to run the strict pass for unknown ages.
-        test_limit (Optional[int]): Limit the number of outer loop iterations 
+        test_limit (Optional[int]): Limit the number of outer loop iterations
                                     for testing.
 
     Returns:
@@ -214,8 +236,7 @@ def find_fuzzy_duplicates(
     
     # PASS 1: Known Age vs Known Age
     total_known = len(known_records)
-    pass_1_limit = (
-        test_limit if test_limit and test_limit < total_known 
+    pass_1_limit = (test_limit if test_limit and test_limit < total_known
         else total_known
     )
     
@@ -232,9 +253,7 @@ def find_fuzzy_duplicates(
         p1_rels = p1['RelativesList']
         
         # In-place progress update (carriage return prevents console spam)
-        print(
-            f"\r   Processing {i+1}/{pass_1_limit}: {p1_name[:30]:<30}", 
-            end="", 
+        print(f"\r   Processing {i + 1}/{pass_1_limit}: {p1_name[:30]:<30}", end="",
             flush=True
         )
         
@@ -251,25 +270,8 @@ def find_fuzzy_duplicates(
             
             if score >= FUZZY_THRESHOLD:
                 p2_rels = p2['RelativesList']
-                family_conflict = False
-                family_match = False
+                family_match, family_conflict = _evaluate_family_context(p1_rels, p2_rels)
                 
-                # --- FAMILY CONTEXT FILTER ---
-                if p1_rels and p2_rels:
-                    for r1 in p1_rels:
-                        for r2 in p2_rels:
-                            rel_score = fuzz.token_set_ratio(r1, r2)
-                            if rel_score >= FAMILY_MATCH_THRESHOLD:
-                                family_match = True
-                                break
-                        if family_match:
-                            break
-                    
-                    if not family_match:
-                        # They both have relatives, but none match. 
-                        # High chance of false positive!
-                        family_conflict = True
-                        
                 if family_conflict:
                     continue  # Skip this match entirely.
                 
@@ -288,7 +290,7 @@ def find_fuzzy_duplicates(
                     'BirthYear_2': p2['BirthYear'],
                     'Age_Gap': age_diff
                 })
-    print() 
+    print()
 
     # PASS 2: Unknown Age vs All
     if run_pass_two and not test_limit:
@@ -303,9 +305,7 @@ def find_fuzzy_duplicates(
             p1_id = p1['PersonID']
             p1_rels = p1['RelativesList']
             
-            print(
-                f"\r   Processing {i+1}/{total_unknown}: {p1_name[:30]:<30}", 
-                end="", 
+            print(f"\r   Processing {i + 1}/{total_unknown}: {p1_name[:30]:<30}", end="",
                 flush=True
             )
             
@@ -321,23 +321,8 @@ def find_fuzzy_duplicates(
                 
                 if score >= FUZZY_THRESHOLD_STRICT:
                     p2_rels = p2['RelativesList']
-                    family_conflict = False
-                    family_match = False
+                    family_match, family_conflict = _evaluate_family_context(p1_rels, p2_rels)
                     
-                    # --- FAMILY CONTEXT FILTER ---
-                    if p1_rels and p2_rels:
-                        for r1 in p1_rels:
-                            for r2 in p2_rels:
-                                rel_score = fuzz.token_set_ratio(r1, r2)
-                                if rel_score >= FAMILY_MATCH_THRESHOLD:
-                                    family_match = True
-                                    break
-                            if family_match:
-                                break
-                        
-                        if not family_match:
-                            family_conflict = True
-                            
                     if family_conflict:
                         continue  # Skip this match entirely.
                         
@@ -374,7 +359,7 @@ def find_fuzzy_duplicates(
 def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
     """
     Writes the tasks directly into the RootsMagic database Task tables.
-    Also handles deduplication of Folders and clean-up of previous script runs.
+    Also handles deduplication of Folders and cleanup of previous script runs.
 
     Args:
         matches_df (pd.DataFrame): DataFrame containing matched duplicates.
@@ -395,10 +380,10 @@ def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
     # --- NEW FOLDER DEDUPLICATION LOGIC ---
     # Find folders with the exact same name to merge them
     cursor.execute('''
-        SELECT TagName 
-        FROM TagTable 
-        WHERE TagType = 1 
-        GROUP BY TagName 
+                   SELECT TagName
+                   FROM TagTable
+                   WHERE TagType = 1
+                   GROUP BY TagName
         HAVING COUNT(TagID) > 1
     ''')
     duplicate_folder_names = cursor.fetchall()
@@ -413,7 +398,7 @@ def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
             # Get all TagIDs for this exact folder name, sorted to keep oldest
             cursor.execute(
                 'SELECT TagID FROM TagTable '
-                'WHERE TagType = 1 AND TagName = ? ORDER BY TagID', 
+                'WHERE TagType = 1 AND TagName = ? ORDER BY TagID',
                 (f_name,)
             )
             ids = [row[0] for row in cursor.fetchall()]
@@ -424,8 +409,8 @@ def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
             for dupe_id in duplicate_ids:
                 # Move tasks from duplicate folder to survivor folder
                 cursor.execute('''
-                    UPDATE TaskLinkTable 
-                    SET OwnerID = ? 
+                               UPDATE TaskLinkTable
+                               SET OwnerID = ?
                     WHERE OwnerType = 18 AND OwnerID = ?
                 ''', (survivor_id, dupe_id))
                 
@@ -439,10 +424,10 @@ def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
     
     # 1. Clear assigned colors for anyone previously linked to an MGS match task
     cursor.execute(f'''
-        UPDATE PersonTable 
+        UPDATE PersonTable
         SET Color{COLOR_SET} = 0
         WHERE PersonID IN (
-            SELECT OwnerID FROM TaskLinkTable 
+            SELECT OwnerID FROM TaskLinkTable
             WHERE OwnerType = 0 AND TaskID IN (
                 SELECT TaskID FROM TaskTable WHERE RefNumber LIKE 'MGS-%'
             )
@@ -451,7 +436,8 @@ def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
     
     # 2. Delete the links for the match tasks
     cursor.execute('''
-        DELETE FROM TaskLinkTable 
+                   DELETE
+                   FROM TaskLinkTable
         WHERE TaskID IN (
             SELECT TaskID FROM TaskTable WHERE RefNumber LIKE 'MGS-%'
         )
@@ -462,18 +448,16 @@ def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
 
     # Clean up ghost folder mistakenly created in TaskTable from older runs
     try:
-        cursor.execute(
-            "DELETE FROM TaskTable WHERE TaskType = 1 AND Name = ?", 
+        cursor.execute("DELETE FROM TaskTable WHERE TaskType = 1 AND Name = ?",
             (FOLDER_NAME,)
         )
     except sqlite3.OperationalError:
         pass
     
-    utc_mod_date = 0.0 
+    utc_mod_date = 0.0
     
     # Ensure the folder exists in TagTable (TagType = 1 = Task Folder)
-    cursor.execute(
-        "SELECT TagID FROM TagTable WHERE TagType = 1 AND TagName = ?", 
+    cursor.execute("SELECT TagID FROM TagTable WHERE TagType = 1 AND TagName = ?",
         (FOLDER_NAME,)
     )
     folder = cursor.fetchone()
@@ -482,8 +466,8 @@ def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
         folder_id = folder[0]
     else:
         cursor.execute('''
-            INSERT INTO TagTable 
-            (TagType, TagValue, TagName, Description, UTCModDate) 
+                       INSERT INTO TagTable
+                           (TagType, TagValue, TagName, Description, UTCModDate)
             VALUES (1, 0, ?, '', ?)
         ''', (FOLDER_NAME, utc_mod_date))
         folder_id = cursor.lastrowid
@@ -523,9 +507,8 @@ def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
         
         # Insert single main Task (TaskType = 2 based on user's DB schema)
         cursor.execute('''
-            INSERT INTO TaskTable (
-                TaskType, RefNumber, Name, Status, Priority, 
-                Date1, Date2, Date3, SortDate1, SortDate2, SortDate3, 
+            INSERT INTO TaskTable (TaskType, RefNumber, Name, Status, Priority,
+                                   Date1, Date2, Date3, SortDate1, SortDate2, SortDate3,
                 Filename, Details, Results, UTCModDate, Exclude
             )
             VALUES (2, ?, ?, 0, ?, '', '', '', 0, 0, 0, '', ?, '', ?, 0)
@@ -541,15 +524,15 @@ def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
         ]
         
         cursor.executemany('''
-            INSERT INTO TaskLinkTable (TaskID, OwnerType, OwnerID, UTCModDate) 
+                           INSERT INTO TaskLinkTable (TaskID, OwnerType, OwnerID, UTCModDate)
             VALUES (?, ?, ?, ?)
         ''', links)
         
         # Apply Slate color to both individuals in Color Set 2
         for p_id in (row['ID_1'], row['ID_2']):
             cursor.execute(f'''
-                UPDATE PersonTable 
-                SET Color{COLOR_SET} = ? 
+                UPDATE PersonTable
+                SET Color{COLOR_SET} = ?
                 WHERE PersonID = ?
             ''', (COLOR_VALUE, p_id))
         
@@ -563,24 +546,24 @@ def write_tasks_to_db(matches_df: pd.DataFrame, db_path: str) -> None:
 # ==========================================
 # MAIN EXECUTION
 # ==========================================
-if __name__ == "__main__":
+def main() -> None:
+	"""Main execution entry point."""
     # flush=True ensures the UI instantly receives the print statements
     print("==========================================", flush=True)
     print("RootsMagic Duplicate Finder", flush=True)
     print("==========================================", flush=True)
     print("Select run mode:", flush=True)
-    print(
-        " 1. Pass 1 only (Compare records with known birth years - FASTER)", 
+    print(" 1. Pass 1 only (Compare records with known birth years - FASTER)",
         flush=True
     )
     print(
         " 2. Pass 1 & 2 (Include strict comparisons for missing birth years "
-        "- SLOWER)", 
+        "- SLOWER)",
         flush=True
     )
     print(
         " 3. TEST MODE (Only process the first 100 individuals to quickly "
-        "test database writing)", 
+        "test database writing)",
         flush=True
     )
     choice = input("Enter 1, 2, or 3 (default 1): ").strip()
@@ -590,9 +573,7 @@ if __name__ == "__main__":
     test_limit = 100 if choice == "3" else None
 
     people_df = extract_people_from_rm(RM_DATABASE_PATH)
-    suggestions_df = find_fuzzy_duplicates(
-        people_df, 
-        run_pass_two=run_pass_two, 
+    suggestions_df = find_fuzzy_duplicates(people_df, run_pass_two=run_pass_two,
         test_limit=test_limit
     )
     
@@ -630,7 +611,10 @@ if __name__ == "__main__":
             else:
                 print("Invalid input. Please type 'yes' or 'no'.")
     else:
-        print(
-            "\nNo fuzzy duplicates found based on the current threshold.", 
+        print("\nNo fuzzy duplicates found based on the current threshold.",
             flush=True
         )
+
+
+if __name__ == "__main__":
+	main()

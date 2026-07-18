@@ -14,11 +14,11 @@ import sys
 import time
 from pathlib import Path
 from textwrap import dedent
+from typing import Dict, List, Union
 
+from PIL import Image
 from dotenv import load_dotenv
 from google import genai
-from google.genai import errors, types
-from PIL import Image
 
 # 1. Load variables from .env
 load_dotenv(override=True)
@@ -26,36 +26,41 @@ load_dotenv(override=True)
 # 2. Initialize the GenAI Client
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Configuration dictionary loaded from environment variables
-CONFIG = {
-    "parish_name": os.getenv("PARISH_NAME"),
-    "parish_location": f"{os.getenv('PARISH_CITY', '')}, {os.getenv('PARISH_STATE', '')}".strip(", "),
-    "volume_title": os.getenv("VOLUME_TITLE"),
-    "volume_num": os.getenv("VOLUME_NUM", ""),
-    "api_budget": float(os.getenv("API_BUDGET", "5.00")),
-    "cost_per_1m_in": float(os.getenv("COST_PER_1M_INPUT", "0.075")),
-    "cost_per_1m_out": float(os.getenv("COST_PER_1M_OUTPUT", "0.30")),
-    "cache_discount_multiplier": float(os.getenv("CACHE_DISCOUNT_MULTIPLIER", "0.10")),
-}
+# Extracted from a single dictionary into typed globals to resolve `__mul__`
+# type inference warnings caused by mixed-type dictionary values.
+PARISH_NAME: Union[str, None] = os.getenv("PARISH_NAME")
+PARISH_CITY: str = os.getenv("PARISH_CITY", "")
+PARISH_STATE: str = os.getenv("PARISH_STATE", "")
+PARISH_LOCATION: str = f"{PARISH_CITY}, {PARISH_STATE}".strip(", ")
+
+VOLUME_TITLE: Union[str, None] = os.getenv("VOLUME_TITLE")
+VOLUME_NUM: str = os.getenv("VOLUME_NUM", "")
+
+API_BUDGET: float = float(os.getenv("API_BUDGET", "5.00"))
+COST_PER_1M_IN: float = float(os.getenv("COST_PER_1M_INPUT", "0.075"))
+COST_PER_1M_OUT: float = float(os.getenv("COST_PER_1M_OUTPUT", "0.30"))
+CACHE_DISCOUNT_MULTIPLIER: float = float(os.getenv("CACHE_DISCOUNT_MULTIPLIER", "0.10"))
 
 # Safely construct absolute paths using pathlib
-PROGRAM_DIR = Path(os.getenv("PROGRAM_DIR", ""))
-MASTER_DB = str(PROGRAM_DIR / os.getenv("JSON_DIR", "") / os.getenv("MASTER_DB_NAME", ""))
-IMAGE_DIR = str(PROGRAM_DIR / os.getenv("IMAGE_DIR", ""))
+PROGRAM_DIR: Path = Path(os.getenv("PROGRAM_DIR", ""))
+MASTER_DB: str = str(PROGRAM_DIR / os.getenv("JSON_DIR", "") / os.getenv("MASTER_DB_NAME", ""))
+IMAGE_DIR: str = str(PROGRAM_DIR / os.getenv("IMAGE_DIR", ""))
 
-MODEL_ID = os.getenv("MODEL_NAME")
-DEBUG_FILE = sys.argv[1] if len(sys.argv) > 1 else None
+MODEL_ID: Union[str, None] = os.getenv("MODEL_NAME")
+DEBUG_FILE: Union[str, None] = sys.argv[1] if len(sys.argv) > 1 else None
+
+# A strict Union alias to replace 'Any' in structured JSON dictionaries
+JSONType = Union[str, int, float, bool, None, list, dict]
 
 # Load the JSON schema that the LLM must conform to
 with open("register_schema.json", "r", encoding="utf-8") as schema_file:
-    SCHEMA = json.load(schema_file)
-
+    SCHEMA: Dict[str, JSONType] = json.load(schema_file)
 
 def optimize_image(image_path: str, max_dimension: int = 2048) -> Image.Image:
     """
     Downscale images client-side to drastically reduce token costs.
     
-    2048px is the sweet spot: large enough to perfectly preserve 19th-century 
+    2048px is the sweet spot: large enough to perfectly preserve 19th-century
     cursive legibility, but small enough to reduce Gemini tile costs.
 
     Args:
@@ -69,7 +74,6 @@ def optimize_image(image_path: str, max_dimension: int = 2048) -> Image.Image:
     # LANCZOS resampling maintains sharp edges for text readability
     img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
     return img
-
 
 def get_cached_system_instruction() -> str:
     """
@@ -153,12 +157,12 @@ def get_cached_system_instruction() -> str:
         - 9/0 = Other individuals
 
         10. TRANSCRIPTION & TRANSLATION
-        - english_translation = full English translation. 
+        - english_translation = full English translation.
         - original_transcription = exact original French/Latin.
         - use English when filling in all structured facts fields. Use original_transcription just in the citation block.
         
         11. RECORDS SPANNING PAGE BOUNDARIES
-        - Merge records logically, but NEVER invent or hallucinate missing text. 
+        - Merge records logically, but NEVER invent or hallucinate missing text.
         - If cut off, use "[illegible]". Mark these records as "[NEEDS REVIEW]".
 
         12. STRICT VISUAL FIDELITY
@@ -166,60 +170,55 @@ def get_cached_system_instruction() -> str:
         - ANTI-CROSS-POLLINATION: NEVER carry over surnames from adjacent records.
     """)
 
-
 def get_dynamic_prompt(file_name: str, volume: str, pages_str: str) -> str:
     """
     Generate only the dynamic metadata for the specific image being processed.
-
-    Args:
-        file_name (str): The base name of the image file.
-        volume (str): The register volume number.
-        pages_str (str): The specific page numbers covered by the image.
-
-    Returns:
-        str: The dynamic portion of the LLM prompt.
     """
     return dedent(f"""
-        Metadata Context: 
-        File: {file_name}, 
-        Volume: {volume}, 
-        Pages: {pages_str}, 
-        Church: {CONFIG['parish_name']}, 
-        Location: {CONFIG['parish_location']}
+        Metadata Context:
+        File: {file_name},
+        Volume: {volume},
+        Pages: {pages_str},
+        Church: {PARISH_NAME},
+        Location: {PARISH_LOCATION}
     """)
-
 
 # noinspection GrazieInspection
 def run_batch_process() -> None:
     """
     Main orchestration loop. Iterates through all images in the source directory,
-    calls the Gemini API, tracks token usage and budget, and appends extracted 
+    calls the Gemini API, tracks token usage and budget, and appends extracted
     records to the local JSON database.
     """
+    # Explicitly hint master_data to prevent Union extend warnings later
+    master_data: Dict[str, Union[str, float, int, List[Dict[str, JSONType]], None]]
+
     # Load existing master database to track progress and budget
     if os.path.exists(MASTER_DB):
         with open(MASTER_DB, 'r', encoding='utf-8') as f:
             master_data = json.load(f)
-            total_spent = master_data.get("total_spent", 0.0)
-            total_pages_processed = master_data.get("total_pages_processed", 0)
+            total_spent = float(master_data.get("total_spent", 0.0))
+            total_pages_processed = int(master_data.get("total_pages_processed", 0))
     else:
-        master_data = {
-            "register_title": CONFIG['volume_title'], 
+        master_data = {"register_title": VOLUME_TITLE,
             "sheets": [],
             "total_spent": 0.0,
             "total_pages_processed": 0
         }
         total_spent = 0.0
         total_pages_processed = 0
-
-    processed_files = {
-        s['document_metadata']['file_name'] 
-        for s in master_data.get('sheets', [])
-    }
+    
+    processed_files = set()
+    existing_sheets = master_data.get('sheets', [])
+    if isinstance(existing_sheets, list):
+        for s in existing_sheets:
+            if isinstance(s, dict):
+                metadata = s.get('document_metadata', {})
+                if isinstance(metadata, dict) and 'file_name' in metadata:
+                    processed_files.add(metadata['file_name'])
     
     # Gather all valid image files
-    all_images = [
-        f for f in os.listdir(IMAGE_DIR) 
+    all_images = [f for f in os.listdir(IMAGE_DIR)
         if f.lower().endswith(('.jpg', '.jpeg', '.png', '.tiff', '.tif'))
     ]
 
@@ -242,8 +241,8 @@ def run_batch_process() -> None:
         print("Creating Context Cache for System Instructions to reduce costs...")
         try:
             cache = client.caches.create(
-                model=MODEL_ID,
-                config=types.CreateCachedContentConfig(
+                model=MODEL_ID, # Resolved types reference using genai.types
+                config=genai.types.CreateCachedContentConfig(
                     system_instruction=get_cached_system_instruction(),
                     ttl="86400s",  # 24 hours survival
                 )
@@ -263,8 +262,8 @@ def run_batch_process() -> None:
             file_ext = os.path.splitext(filename)[1].upper().replace(".", "")
             if file_ext == "JPG":
                 file_ext = "JPEG"
-
-            print(f"[{index}/{total_files}] Processing {filename} with {MODEL_ID}...", 
+            
+            print(f"[{index}/{total_files}] Processing {filename} with {MODEL_ID}...",
                   end="", flush=True)
                   
             pages_str = file_base.split('_')[-1]
@@ -272,13 +271,12 @@ def run_batch_process() -> None:
             try:
                 # Downscale image client-side to save tokens
                 img = optimize_image(os.path.join(IMAGE_DIR, filename))
-                prompt = get_dynamic_prompt(file_base, CONFIG['volume_num'], pages_str)
+                prompt = get_dynamic_prompt(file_base, VOLUME_NUM, pages_str)
 
                 if DEBUG_FILE:
                     # Cache cannot be used with thinking mode enabled in current API
                     prompt = get_cached_system_instruction() + "\n\n" + prompt
-                    gen_config_kwargs = dict(
-                        thinking_config=types.ThinkingConfig(include_thoughts=True),
+                    gen_config_kwargs = dict(thinking_config=genai.types.ThinkingConfig(include_thoughts=True),
                     )
                     prompt += (
                         "\n\nOUTPUT FORMAT: Respond with ONLY raw JSON matching this "
@@ -304,8 +302,7 @@ def run_batch_process() -> None:
                     try:
                         response = client.models.generate_content(
                             model=MODEL_ID,
-                            contents=[prompt, img],
-                            config=types.GenerateContentConfig(**gen_config_kwargs)
+                            contents=[prompt, img], config=genai.types.GenerateContentConfig(**gen_config_kwargs)
                         )
 
                         # Extract model's internal reasoning if in debug mode
@@ -326,9 +323,14 @@ def run_batch_process() -> None:
                             # Remove markdown code fences if model stubbornly includes them
                             regex_pattern = r"^" + backticks + r"(?:json)?\s*|\s*" + backticks + r"$"
                             raw_text = re.sub(regex_pattern, "", raw_text.strip())
-                    
-                        page_data = json.loads(raw_text)
+                        
+                        page_data: Dict[str, JSONType] = json.loads(raw_text)
                         usage = response.usage_metadata
+                        
+                        # Initialize tracking variables to prevent UnboundLocalError IDE warnings
+                        in_tokens = out_tokens = cached_tokens = thoughts_tokens = 0
+                        call_cost = remaining_budget = 0.0
+                        estimated_pages_left = 0
 
                         if usage:
                             # 1. Extract all token buckets
@@ -336,44 +338,46 @@ def run_batch_process() -> None:
                             out_tokens = getattr(usage, 'candidates_token_count', 0)
                             cached_tokens = getattr(usage, 'cached_content_token_count', 0)
                             thoughts_tokens = getattr(usage, 'thoughts_token_count', 0)
-
-                            # 2. Calculate costs
-                            cache_rate = CONFIG["cost_per_1m_in"] * CONFIG["cache_discount_multiplier"]
+                            
+                            # 2. Calculate costs using our typed globals
+                            cache_rate = COST_PER_1M_IN * CACHE_DISCOUNT_MULTIPLIER
                             cost_cached = (cached_tokens / 1_000_000) * cache_rate
-                            cost_in = (in_tokens / 1_000_000) * CONFIG["cost_per_1m_in"]
-                            cost_out = ((out_tokens + thoughts_tokens) / 1_000_000) * CONFIG["cost_per_1m_out"]
+                            cost_in = (in_tokens / 1_000_000) * COST_PER_1M_IN
+                            cost_out = ((out_tokens + thoughts_tokens) / 1_000_000) * COST_PER_1M_OUT
                         
                             call_cost = cost_cached + cost_in + cost_out
                             total_spent += call_cost
                             total_pages_processed += 1
                         
                             # Determine run-rate and remaining budget
-                            avg_cost_per_page = (
-                                total_spent / total_pages_processed 
+                            avg_cost_per_page = (total_spent / total_pages_processed
                                 if total_pages_processed > 0 else 0
                             )
                             load_dotenv(override=True)
-                            live_budget = float(os.getenv("API_BUDGET", CONFIG["api_budget"]))
+                            live_budget = float(os.getenv("API_BUDGET", str(API_BUDGET)))
                             remaining_budget = max(0.0, live_budget - total_spent)
-                            estimated_pages_left = (
-                                math.floor(remaining_budget / avg_cost_per_page) 
+                            estimated_pages_left = (math.floor(remaining_budget / avg_cost_per_page)
                                 if avg_cost_per_page > 0 else 0
                             )
 
                         # Inject document metadata back into each parsed sheet
-                        for sheet in page_data.get("sheets", []):
-                            if "document_metadata" not in sheet:
-                                sheet["document_metadata"] = {}
-                            sheet["document_metadata"]["file_name"] = filename
-                            sheet["document_metadata"]["file_type"] = file_ext
-                            sheet["document_metadata"]["volume"] = CONFIG['volume_num']
+                        extracted_sheets = page_data.get("sheets", [])
+                        if isinstance(extracted_sheets, list):
+                            for sheet in extracted_sheets:
+                                if isinstance(sheet, dict):
+                                    if "document_metadata" not in sheet:
+                                        sheet["document_metadata"] = {}
+                                    metadata = sheet["document_metadata"]
+                                    if isinstance(metadata, dict):
+                                        metadata["file_name"] = filename
+                                        metadata["file_type"] = file_ext
+                                        metadata["volume"] = VOLUME_NUM
 
                         if DEBUG_FILE:
                             print("--- EXTRACTED JSON (not saved to master DB) ---")
                             print(json.dumps(page_data, indent=2, ensure_ascii=False))
                             if usage:
-                                total_tokens = (
-                                    getattr(usage, 'total_token_count', None) 
+                                total_tokens = (getattr(usage, 'total_token_count', None)
                                     or (cached_tokens + in_tokens + out_tokens + thoughts_tokens)
                                 )
                                 print(
@@ -388,8 +392,13 @@ def run_batch_process() -> None:
                             else:
                                 print(" DONE! ✓ (debug run)")
                         else:
-                            # Append to master dataset
-                            master_data["sheets"].extend(page_data.get("sheets", []))
+                            # Append to master dataset with type guarding to fix 'extend' errors
+                            master_sheets = master_data.get("sheets")
+                            if isinstance(master_sheets, list) and isinstance(extracted_sheets, list):
+                                master_sheets.extend(extracted_sheets)
+                            else:
+                                master_data["sheets"] = extracted_sheets
+                                
                             master_data["total_spent"] = total_spent
                             master_data["total_pages_processed"] = total_pages_processed
                             
@@ -400,8 +409,7 @@ def run_batch_process() -> None:
                                 json.dump(master_data, f, indent=2, ensure_ascii=False)
 
                             if usage:
-                                total_tokens = (
-                                    getattr(usage, 'total_token_count', None) 
+                                total_tokens = (getattr(usage, 'total_token_count', None)
                                     or (cached_tokens + in_tokens + out_tokens + thoughts_tokens)
                                 )
                                 print(f" DONE! ✓ | Cost: ${call_cost:.4f}")
@@ -421,7 +429,7 @@ def run_batch_process() -> None:
                 
                     except json.JSONDecodeError as e:
                         json_attempts += 1
-                        print(f"\n   [!] Malformed JSON generated. Retrying... ({e})", 
+                        print(f"\n   [!] Malformed JSON generated. Retrying... ({e})",
                               end="", flush=True)
                         if json_attempts >= max_json_retries:
                             gave_up_early = (
@@ -431,8 +439,9 @@ def run_batch_process() -> None:
                             break
                         time.sleep(2)
                         attempts += 1
-
-                    except errors.ClientError as api_error:
+                    
+                    # Resolved errors reference using genai.errors
+                    except genai.errors.ClientError as api_error:
                         error_msg = str(api_error)
 
                         if "PerDay" in error_msg:

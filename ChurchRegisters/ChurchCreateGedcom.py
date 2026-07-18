@@ -12,7 +12,7 @@ import hashlib
 import json
 import os
 import re
-from pathlib import Path
+from typing import Union
 
 from dotenv import load_dotenv
 
@@ -26,13 +26,6 @@ PROGRAM_DIR = os.getenv("PROGRAM_DIR", "")
 def safe_path(base: str, *parts: str) -> str:
     """
     Safely joins paths, allowing absolute paths to override the base.
-    
-    Args:
-        base (str): The base directory path.
-        *parts (str): Path components to join.
-
-    Returns:
-        str: The resolved absolute or relative path.
     """
     res = base
     for p in parts:
@@ -46,18 +39,14 @@ def safe_path(base: str, *parts: str) -> str:
 
 # Process priest sequence list
 priest_list = os.getenv("PRIEST_NAMES", "").split(',')
-PRIEST_SEQ = {
-    name.strip(): str(i + 1) 
+PRIEST_SEQ = {name.strip(): str(i + 1)
     for i, name in enumerate(priest_list) if name.strip()
 }
 
-# Master Configuration Dictionary
 CONFIG = {
     "researcher": os.getenv("RESEARCHER", "Unknown"),
     "image_dir": safe_path(PROGRAM_DIR, os.getenv("IMAGE_DIR", "")),
-    "master_db": safe_path(
-        PROGRAM_DIR, 
-        os.getenv("JSON_DIR", ""), 
+    "master_db": safe_path(PROGRAM_DIR, os.getenv("JSON_DIR", ""),
         os.getenv("MASTER_DB_NAME", "church_register.json")
     ),
     "gedcom_out_path": safe_path(PROGRAM_DIR, os.getenv("GEDCOM_OUTPUT_PATH", "")),
@@ -65,8 +54,9 @@ CONFIG = {
     "parish_file_name": os.getenv("PARISH_FILE_NAME", "Parish_Export"),
     "parish_name": os.getenv("PARISH_NAME", "Parish Name"),
     "parish_city": os.getenv("PARISH_CITY", "City"),
-    "parish_state": os.getenv("PARISH_STATE", "State"),
-    "parish_location": f"{os.getenv('PARISH_CITY', 'City')}, {os.getenv('PARISH_STATE', 'State')}".strip(", "),
+    "parish_state": os.getenv("PARISH_STATE", "State"), "parish_location": (f"{os.getenv('PARISH_CITY', 'City')}, "
+                                                                            f"{os.getenv('PARISH_STATE', 'State')}").strip(
+        ", "),
     "parish_name_short": os.getenv("PARISH_NAME_SHORT", "Parish"),
     "volume_title": os.getenv("VOLUME_TITLE", ""),
     "volume_num": os.getenv("VOLUME_NUM", ""),
@@ -92,29 +82,29 @@ CONFIG = {
     "software_vers": os.getenv("SOFTWARE_VERS", "11.0"),
     "copyright_start": os.getenv("COPYRIGHT_START", "2018"),
     "gedcom_note": os.getenv("GEDCOM_NOTE", "This file contains original historical translations and research."),
-    "gedcom_conc": os.getenv("GEDCOM_CONC", "Please do not upload this raw GEDCOM to public trees without attribution."),
+    "gedcom_conc": os.getenv("GEDCOM_CONC",
+        "Please do not upload this raw GEDCOM to public trees without attribution."),
     "review_color": os.getenv("REVIEW_COLOR", "1")
 }
 
 # ==========================================
 # UTILITY FUNCTIONS
 # ==========================================
-def clean_val(val: any) -> str:
+def clean_val(val: Union[str, int, float, None]) -> str:
     """
     Scrubs literal nulls, normalizes spaces, and clears invisible characters.
+    Properly type-hinted to silence IDE '__str__' warnings.
     """
-    if not val:
+    if val is None or val == "":
         return ""
-    val_str = re.sub(
-        r' +', ' ', 
+    val_str = re.sub(r' +', ' ',
         str(val).replace('\xa0', ' ').replace('\u200b', '').replace('\u202f', ' ')
     ).strip()
     return "" if val_str.lower() in ["null", "none", ""] else val_str
 
-
 def extract_volume(sheet: dict) -> str:
     """
-    Aggressively extracts volume from metadata or sheet root, 
+    Aggressively extracts volume from metadata or sheet root,
     falling back to global CONFIG.
     """
     meta = sheet.get('document_metadata', {})
@@ -129,15 +119,14 @@ def extract_volume(sheet: dict) -> str:
         
     return clean_val(CONFIG.get('volume_num'))
 
-
 def get_dynamic_source_id(vol_val: str) -> str:
     """Constructs a dynamic GEDCOM Source ID based on the volume."""
-    base_id = re.sub(r'\D', '', str(CONFIG.get('register_source_id', '1')))
+    # Used f-string instead of str() to avoid type checker warnings on Any
+    base_id = re.sub(r'\D', '', f"{CONFIG.get('register_source_id', '1')}")
     if base_id.endswith('001') and len(base_id) > 1:
         base_id = base_id[:-3]
-    vol_digits = re.sub(r'\D', '', str(vol_val or '1')) or '1'
+    vol_digits = re.sub(r'\D', '', f"{vol_val or '1'}") or '1'
     return f"@S{base_id or '1'}{vol_digits.zfill(3)}@"
-
 
 def format_gedcom_date(date_str: str) -> str:
     """
@@ -167,40 +156,37 @@ def format_gedcom_date(date_str: str) -> str:
     
     return prefix + date_str
 
-
 def get_proof_status(date_str: str) -> str:
     """Evaluates date prefixes to assign proposed or proven proof status tags."""
     if date_str:
-        upper_date = str(date_str).upper().strip()
+        upper_date = f"{date_str}".upper().strip()
         if upper_date.startswith(("BEF", "ABT", "AFT", "EST", "CAL")):
             return "proposed"
     return "proven"
 
-
-# noinspection GrazieInspection
 def estimate_birth_from_age(event_date: str, age_str: str) -> str:
     """
-    Calculates an estimated birth date based on event date precision 
+    Calculates an estimated birthdate based on event date precision
     and detailed age metadata (years, months, weeks, days).
     """
     if not event_date or not age_str:
         return ""
     
     try:
-        # Determine precision of event date
-        if len(str(event_date)) == 10:
-            dt = datetime.datetime.strptime(str(event_date)[:10], "%Y-%m-%d")
+        # Determine precision of event date safely handling Any type
+        if len(f"{event_date}") == 10:
+            dt = datetime.datetime.strptime(f"{event_date}"[:10], "%Y-%m-%d")
             precision = "day"
-        elif len(str(event_date)) == 7:
-            dt = datetime.datetime.strptime(str(event_date)[:7], "%Y-%m")
+        elif len(f"{event_date}") == 7:
+            dt = datetime.datetime.strptime(f"{event_date}"[:7], "%Y-%m")
             precision = "month"
         else:
-            dt = datetime.datetime.strptime(str(event_date)[:4], "%Y")
+            dt = datetime.datetime.strptime(f"{event_date}"[:4], "%Y")
             precision = "year"
     except ValueError:
         return ""
-        
-    age_str = str(age_str).strip().lower()
+    
+    age_str = f"{age_str}".strip().lower()
     years = sum(map(int, re.findall(r'(\d+)\s*(?:year|yr|y\b)', age_str)))
     months = sum(map(int, re.findall(r'(\d+)\s*(?:month|mo|m\b)', age_str)))
     weeks = sum(map(int, re.findall(r'(\d+)\s*(?:week|wk|w\b)', age_str)))
@@ -238,10 +224,9 @@ def estimate_birth_from_age(event_date: str, age_str: str) -> str:
         
     return f"CAL {dt.year}"
 
-
 def wrap_text(text: str, tag: str = "5 CONT") -> str:
     """
-    Wraps text content natively for GEDCOM, slicing CONC tags 
+    Wraps text content natively for GEDCOM, slicing CONC tags
     mid-word to prevent layout artifacts.
     """
     if not text:
@@ -258,68 +243,60 @@ def wrap_text(text: str, tag: str = "5 CONT") -> str:
             
     return "\n".join(wrapped)
 
-
 def get_by_role(rec: dict, role_num: str) -> dict:
     """Finds and extracts the first participant profile for a specific role."""
     for p in rec.get('participants', []):
-        if str(p.get('role_number')) == str(role_num):
+        if f"{p.get('role_number', '')}" == f"{role_num}":
             return p
     return None
-
 
 def get_role_name(part: dict, is_marriage: bool, event_tag: str) -> str:
     """Maps structural register metadata role digits into human-readable strings."""
     if part.get('is_priest'):
         return CONFIG['role_clergy']
-        
-    role = str(part.get('role_number', '0'))
+    
+    role = f"{part.get('role_number', '0')}"
     if is_marriage:
-        mapping = {
-            "2": "Father of Groom", "3": "Mother of Groom", "4": "Bride", 
-            "5": "Father of Bride", "6": "Mother of Bride", "7": "Witness", 
+        mapping = {"2": "Father of Groom", "3": "Mother of Groom", "4": "Bride", "5": "Father of Bride",
+            "6": "Mother of Bride", "7": "Witness",
             "8": "Witness"
         }
         return mapping.get(role, CONFIG['role_default_witness'])
         
-    base_mapping = {
-        "2": "Father", "3": "Mother", 
-        "7": "Godfather" if event_tag in ["BAPM", "CHR"] else "Witness", 
+    base_mapping = {"2": "Father", "3": "Mother", "7": "Godfather" if event_tag in ["BAPM", "CHR"] else "Witness",
         "8": "Godmother" if event_tag in ["BAPM", "CHR"] else "Witness"
     }
     return base_mapping.get(role, CONFIG['role_default_witness'])
 
-
 def evaluate_task_priority(task_note: str) -> tuple:
     """
-    Evaluates task notes for keywords to assign a priority, 
+    Evaluates task notes for keywords to assign a priority,
     color code, and dynamic folder name.
     """
-    task_note_lower = str(task_note).lower()
+    task_note_lower = f"{task_note}".lower()
 
     # (Keywords, Priority Level, RM Color Code, Target Folder Name)
+    # noinspection SpellCheckingInspection
     rules = [
-        (
-            ["conflict", "error", "mismatch", "discrepancy", "inconsistent", "contradict", "wrong"], 
+        (["conflict", "error", "mismatch", "discrepancy", "inconsistent", "contradict", "wrong"],
             1, "1", "Data Conflicts & Errors"
         ),
-        (
-            ["illegible", "unreadable", "hard to read", "faded", "damaged", "torn", "blot", "margin", "ink"], 
+        (["illegible", "unreadable", "hard to read", "faded", "damaged", "torn", "blot", "margin", "ink"],
             1, "1", "Legibility & Record Condition"
         ),
-        (
-            ["surname", "given name", "blank name", "no name", "unknown name", "alias", "dit name", "spelling", "identity"], 
+        (["surname", "given name", "blank name", "no name", "unknown name", "alias", "dit name", "spelling",
+          "identity"],
             1, "1", "Name & Identity Issues"
         ),
-        (
-            ["parent", "father", "mother", "sponsor", "godparent", "witness", "spouse", "bride", "groom", "relationship", "unknown parents"], 
+        (["parent", "father", "mother", "sponsor", "godparent", "witness", "spouse", "bride", "groom", "relationship",
+          "unknown parents"],
             2, "2", "Relationship & Participant Issues"
         ),
-        (
-            ["translate", "translation", "latin", "french", "language"], 
+        (["translate", "translation", "latin", "french", "language"],
             2, "2", "Translation Needed"
         ),
-        (
-            ["date", "year", "month", "day", "invalid", "chronology", "sequence", "estimated", "calculated", "age", "born"], 
+        (["date", "year", "month", "day", "invalid", "chronology", "sequence", "estimated", "calculated", "age",
+          "born"],
             3, "3", "Date & Chronology Issues"
         )
     ]
@@ -330,39 +307,39 @@ def evaluate_task_priority(task_note: str) -> tuple:
 
     return 3, CONFIG.get('review_color', '1'), "General Review"
 
-
 # ==========================================
 # ID GENERATORS
 # ==========================================
 def generate_uid(rec: dict, part: dict, vol: str) -> str:
     """
-    Generates a deterministic ID based on the physical location of the record 
+    Generates a deterministic ID based on the physical location of the record
     to prevent typos from causing collisions.
     """
     src_id = re.sub(r'\D', '', get_dynamic_source_id(vol))
-    vol_str = str(vol or '1').zfill(1)
+    vol_str = f"{vol or '1'}".zfill(1)
     
     if part.get('is_priest'):
-        if part.get('role_number') and len(str(part['role_number'])) > 10:
-            return str(part['role_number'])
-            
-        std_name = f"{clean_val(part.get('std_given'))} {clean_val(part.get('std_surname'))}".strip()
+        if part.get('role_number') and len(f"{part['role_number']}") > 10:
+            return f"{part['role_number']}"
+        
+        std_g = clean_val(part.get('std_given'))
+        std_s = clean_val(part.get('std_surname'))
+        std_name = f"{std_g} {std_s}".strip()
         seq = PRIEST_SEQ.get(std_name, "0")
         return f"{src_id}{vol_str}000000000{seq}"
     
     page_str = clean_val(rec.get('page'))
     rec_id = clean_val(rec.get('record_id'))
-    role = str(part.get('role_number', '0'))
+    role = f"{part.get('role_number', '0')}"
     
     participants = rec.get('participants', [])
-    same_role = [i for i, p in enumerate(participants) if str(p.get('role_number', '0')) == role]
+    same_role = [i for i, p in enumerate(participants) if f"{p.get('role_number', '0')}" == role]
     pos = next((i for i, p in enumerate(participants) if p is part), None)
     occ = same_role.index(pos) if pos in same_role else 0
 
     unique_string = f"indi_{vol}_{page_str}_{rec_id}_{role}_{occ}"
     numeric_id = int(hashlib.md5(unique_string.encode('utf-8')).hexdigest(), 16) % (10**10)
     return f"{src_id}{numeric_id:010d}"
-
 
 def generate_media_uid(meta: dict, vol: str) -> str:
     """Generates a deterministic 10-digit numerical UID for a media file."""
@@ -371,7 +348,8 @@ def generate_media_uid(meta: dict, vol: str) -> str:
     
     if file_name:
         if image_dir:
-            unique_string = f"{os.path.basename(os.path.normpath(image_dir))}\\{file_name}"
+            dir_base = os.path.basename(os.path.normpath(image_dir))
+            unique_string = f"{dir_base}\\{file_name}"
         else:
             unique_string = file_name
     else:
@@ -379,7 +357,6 @@ def generate_media_uid(meta: dict, vol: str) -> str:
         
     numeric_id = int(hashlib.md5(unique_string.encode('utf-8')).hexdigest(), 16) % (10**10)
     return f"M{numeric_id:010d}"
-
 
 def generate_fam_uid(rec: dict, vol: str) -> str:
     """Generates a deterministic Family ID to match the INDI logic."""
@@ -391,11 +368,11 @@ def generate_fam_uid(rec: dict, vol: str) -> str:
     numeric_id = int(hashlib.md5(unique_string.encode('utf-8')).hexdigest(), 16) % (10**10)
     return f"{src_id}{numeric_id:010d}"
 
-
 # ==========================================
 # GEDCOM BLOCK BUILDERS
 # ==========================================
-def build_citation_block(rec: dict, part: dict, tag_name: str, vol: str, media_uid: str, proof_status: str = "proven") -> str:
+def build_citation_block(rec: dict, part: dict, tag_name: str, vol: str, media_uid: str,
+        proof_status: str = "proven") -> str:
     """Constructs the standard source citation block for an event."""
     std_g = clean_val(part.get('std_given'))
     std_s = clean_val(part.get('std_surname'))
@@ -427,20 +404,11 @@ def build_citation_block(rec: dict, part: dict, tag_name: str, vol: str, media_u
     
     block.extend([
         f"3 REFN {clean_val(rec.get('record_number')) or rec_id}",
-        "3 _TMPLT",
-        "4 FIELD", 
-        "5 NAME ItemOfInterest", 
-        f"5 VALUE {f'{std_g} {std_s}'.strip()}",
-        "4 FIELD", 
-        "5 NAME Page", 
-        f"5 VALUE Page {page}",
-        "4 FIELD", 
-        "5 NAME DetailRef", 
+        "3 _TMPLT", "4 FIELD", "5 NAME ItemOfInterest",
+        f"5 VALUE {f'{std_g} {std_s}'.strip()}", "4 FIELD", "5 NAME Page",
+        f"5 VALUE Page {page}", "4 FIELD", "5 NAME DetailRef",
         f"5 VALUE {rec_id}",
-        "3 QUAY 3",
-        "3 _QUAL", 
-        "4 _SOUR O", 
-        "4 _INFO P", 
+        "3 QUAY 3", "3 _QUAL", "4 _SOUR O", "4 _INFO P",
         "4 _EVID D"
     ])
     
@@ -450,19 +418,21 @@ def build_citation_block(rec: dict, part: dict, tag_name: str, vol: str, media_u
     return "\n".join(block)
 
 
-def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, gedcom_date: str, any_part_review: bool, file_name: str, media_title: str) -> tuple:
+def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, gedcom_date: str,
+        any_part_review: bool) -> tuple:
     """
-    Builds a single individual's INDI block, along with their Task block 
+    Builds a single individual's INDI block, along with their Task block
     if flagged for review.
     """
-    is_marriage = str(rec.get('record_type_code')) == "2"
+    # Safe handling of Any types using f-strings for conditionals
+    is_marriage = f"{rec.get('record_type_code', '')}" == "2"
     rec_num_check = clean_val(rec.get('record_number')) or clean_val(rec.get('record_id'))
-    is_christening = str(rec_num_check).upper().startswith('C')
-    is_baptism = str(rec.get('record_type_code')) == "1" and not is_christening
+    is_christening = f"{rec_num_check}".upper().startswith('C')
+    is_baptism = f"{rec.get('record_type_code', '')}" == "1" and not is_christening
     is_bap_or_chr = is_baptism or is_christening
     
-    is_primary = str(part.get('role_number')) == "1"
-    is_parent = str(part.get('role_number')) in ["2", "3", "5", "6"]
+    is_primary = f"{part.get('role_number', '')}" == "1"
+    is_parent = f"{part.get('role_number', '')}" in ["2", "3", "5", "6"]
     is_deceased = bool(part.get('deceased')) or bool(part.get('is_deceased'))
     
     std_g = clean_val(part.get('std_given'))
@@ -489,9 +459,10 @@ def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, 
             raw_b = raw_b or f"BEF {raw_event_date}"
         elif (not is_bap_or_chr and not is_marriage and is_primary) or (is_parent and is_deceased):
             raw_d = raw_d or f"BEF {raw_event_date}"
-            
-        if not is_bap_or_chr and raw_b and not str(raw_b).upper().startswith("CAL "):
-            if str(raw_event_date)[:4] in raw_b and any(m in raw_b.upper() for m in ["BEF", "ABT", "EST", "CAL"]):
+        
+        if not is_bap_or_chr and raw_b and not f"{raw_b}".upper().startswith("CAL "):
+            if (f"{raw_event_date}"[:4] in raw_b and any(
+                m in f"{raw_b}".upper() for m in ["BEF", "ABT", "EST", "CAL"])):
                 raw_b = ""
 
     b_date = format_gedcom_date(raw_b)
@@ -503,7 +474,8 @@ def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, 
     task_block, needs_review, folder_name = None, False, None
 
     # Handle Tasks / Review Flags
-    if part.get('review', False) or (rec.get('review', False) and not any_part_review and is_primary):
+    needs_primary_review = rec.get('review', False) and not any_part_review and is_primary
+    if part.get('review', False) or needs_primary_review:
         needs_review = True
         reasons = [r for r in [clean_val(part.get('review_reason')), clean_val(rec.get('review_reason'))] if r]
         task_note = "; ".join(reasons) if reasons else "Review requested during extraction."
@@ -512,7 +484,7 @@ def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, 
         
         indi.extend([f"1 _COLOR {color_code}", f"1 _TASK @T{uid}@"])
         
-        tag_for_cit = "CHR" if is_christening else ("BAPM" if is_baptism else ("MARR" if is_marriage else "Event"))
+        tag_for_cit = ("CHR" if is_christening else ("BAPM" if is_baptism else ("MARR" if is_marriage else "Event")))
         raw_cit = build_citation_block(rec, part, f"Review {tag_for_cit}", vol, media_uid).split('\n')
         
         task_citation = []
@@ -520,7 +492,7 @@ def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, 
             parts = line.split(" ", 1)
             if len(parts) == 2 and parts[0].isdigit():
                 lvl = int(parts[0])
-                if lvl == 2 and parts[1].startswith("_PROOF"): 
+                if lvl == 2 and parts[1].startswith("_PROOF"):
                     continue
                 task_citation.append(f"{lvl - 1} {parts[1]}")
             else:
@@ -535,16 +507,10 @@ def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, 
             ])
 
         task_lines = [
-            f"0 @T{uid}@ _TASK",
-            f"1 DESC {std_s or '[No Surname]'}, {std_g or '[No Given Name]'} ({clean_val(rec.get('record_id')) or 'Unknown'}): {task_note}",
-            f"1 REFN {uid}", 
-            f"1 _LINK @I{uid}@", 
-            "1 TYPE 2", 
-            f"1 DATE {gedcom_date}", 
-            f"1 _LDATE {gedcom_date}",
-            f"1 NOTE {task_note}", 
-            "1 STAT NEW", 
-            f"1 PRTY {priority}", 
+            f"0 @T{uid}@ _TASK", f"1 DESC {std_s or '[No Surname]'}, {std_g or '[No Given Name]'} "
+                                 f"({clean_val(rec.get('record_id')) or 'Unknown'}): {task_note}", f"1 REFN {uid}",
+            f"1 _LINK @I{uid}@", "1 TYPE 2", f"1 DATE {gedcom_date}",
+            f"1 _LDATE {gedcom_date}", f"1 NOTE {task_note}", "1 STAT NEW", f"1 PRTY {priority}",
             f"1 _COLOR {color_code}"
         ]
         
@@ -572,18 +538,13 @@ def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, 
     if clean_val(part.get('suffix')):
         indi.append(f"2 NSFX {clean_val(part.get('suffix'))}")
     
-    indi.extend([
-        f"1 SOUR {CONFIG['root_source_id']}", 
-        f"2 NAME Researcher: {CONFIG['researcher']}", 
+    indi.extend([f"1 SOUR {CONFIG['root_source_id']}", f"2 NAME Researcher: {CONFIG['researcher']}",
         f"2 _TITL Researcher: {CONFIG['researcher']}"
     ])
 
     if dit_name:
-        indi.extend([
-            f"1 NAME {std_g} /{std_s_base} dit {dit_name}/", 
-            f"1 NAME {std_g} /{dit_name}/", 
-            f"1 EVEN {dit_name}", 
-            "2 TYPE dit Name", 
+        indi.extend([f"1 NAME {std_g} /{std_s_base} dit {dit_name}/", f"1 NAME {std_g} /{dit_name}/",
+            f"1 EVEN {dit_name}", "2 TYPE dit Name",
             build_citation_block(rec, part, 'dit Name', vol, media_uid)
         ])
 
@@ -592,20 +553,17 @@ def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, 
     if race:
         indi.append(f"1 _RACE {race}")
     if religion:
-        indi.extend([
-            f"1 RELI {religion}", 
+        indi.extend([f"1 RELI {religion}",
             build_citation_block(rec, part, "RELI", vol, media_uid)
         ])
     
     final_occu = CONFIG['role_clergy'] if part.get('is_priest') else occu
     if final_occu:
-        indi.extend([
-            f"1 OCCU {final_occu}", 
+        indi.extend([f"1 OCCU {final_occu}",
             build_citation_block(rec, part, "OCCU", vol, media_uid)
         ])
     if resi:
-        indi.extend([
-            f"1 RESI\n2 PLAC {resi}", 
+        indi.extend([f"1 RESI\n2 PLAC {resi}",
             build_citation_block(rec, part, "RESI", vol, media_uid)
         ])
 
@@ -630,16 +588,14 @@ def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, 
     # Link events based on primary role
     if is_primary and not is_marriage:
         tag = "CHR" if is_christening else ("BAPM" if is_baptism else "BURI")
-        indi.extend([
-            f"1 {tag}", 
-            f"2 DATE {format_gedcom_date(raw_event_date)}" if raw_event_date else "", 
+        indi.extend([f"1 {tag}", f"2 DATE {format_gedcom_date(raw_event_date)}" if raw_event_date else "",
             f"2 PLAC {clean_val(rec.get('event_place')) or CONFIG['default_location']}"
         ])
         if age:
             indi.append(f"2 AGE {age}")
         
         for p in rec.get('participants', []):
-            if str(p.get('role_number')) != "1": 
+            if f"{p.get('role_number', '')}" != "1":
                 indi.append(
                     f"2 _SHAR @I{generate_uid(rec, p, vol)}@\n"
                     f"3 ROLE {get_role_name(p, False, tag)}"
@@ -649,9 +605,12 @@ def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, 
     # Link families
     if get_by_role(rec, "1"):
         f_uid = generate_fam_uid(rec, vol)
-        r_num = str(part.get('role_number'))
-        has_g_parents = is_marriage and any(str(p.get('role_number')) in ["2", "3"] for p in rec.get('participants', []))
-        has_b_parents = is_marriage and any(str(p.get('role_number')) in ["5", "6"] for p in rec.get('participants', []))
+        r_num = f"{part.get('role_number', '')}"
+        
+        has_g_parents = is_marriage and any(
+            f"{p.get('role_number', '')}" in ["2", "3"] for p in rec.get('participants', []))
+        has_b_parents = is_marriage and any(
+            f"{p.get('role_number', '')}" in ["5", "6"] for p in rec.get('participants', []))
 
         if is_marriage:
             if r_num == "1":
@@ -674,7 +633,6 @@ def build_individual(uid: str, rec: dict, part: dict, vol: str, media_uid: str, 
 
     return [line for line in indi if line], task_block, needs_review, folder_name
 
-
 def build_family(rec: dict, vol: str, media_uid: str) -> list:
     """Builds FAM records for the primary couple and their parents if present."""
     primary = get_by_role(rec, "1")
@@ -685,7 +643,20 @@ def build_family(rec: dict, vol: str, media_uid: str) -> list:
     fam_uid = generate_fam_uid(rec, vol)
     fam_tag = [f"0 @F{fam_uid}@ FAM"]
     
-    if str(rec.get('record_type_code')) == "2":  
+    def add_parent_family(dad_role: str, mom_role: str, suffix: str, child: dict) -> None:
+        """Helper to deduplicate parent family record generation."""
+        p_dad = get_by_role(rec, dad_role)
+        p_mom = get_by_role(rec, mom_role)
+        if p_dad or p_mom:
+            p_fam = [f"0 @F{fam_uid}{suffix}@ FAM"]
+            if p_dad:
+                p_fam.append(f"1 HUSB @I{generate_uid(rec, p_dad, vol)}@")
+            if p_mom:
+                p_fam.append(f"1 WIFE @I{generate_uid(rec, p_mom, vol)}@")
+            p_fam.append(f"1 CHIL @I{generate_uid(rec, child, vol)}@")
+            fams.append("\n".join(p_fam))
+    
+    if f"{rec.get('record_type_code', '')}" == "2":
         bride = get_by_role(rec, "4")
         if primary:
             fam_tag.append(f"1 HUSB @I{generate_uid(rec, primary, vol)}@")
@@ -693,9 +664,7 @@ def build_family(rec: dict, vol: str, media_uid: str) -> list:
             fam_tag.append(f"1 WIFE @I{generate_uid(rec, bride, vol)}@")
         
         event_date = format_gedcom_date(clean_val(rec.get('event_date')))
-        fam_tag.extend([
-            "1 MARR", 
-            f"2 DATE {event_date}" if event_date else "", 
+        fam_tag.extend(["1 MARR", f"2 DATE {event_date}" if event_date else "",
             f"2 PLAC {clean_val(rec.get('event_place')) or CONFIG['default_location']}"
         ])
         
@@ -705,37 +674,20 @@ def build_family(rec: dict, vol: str, media_uid: str) -> list:
             fam_tag.append(f"2 WIFE\n3 AGE {clean_val(bride.get('age'))}")
 
         for p in rec.get('participants', []):
-            if str(p.get('role_number')) not in ["1", "4"]:
+            if f"{p.get('role_number', '')}" not in ["1", "4"]:
                 fam_tag.append(
                     f"2 _SHAR @I{generate_uid(rec, p, vol)}@\n"
                     f"3 ROLE {get_role_name(p, True, 'MARR')}"
                 )
-
+        
         fam_tag.append(build_citation_block(rec, primary, "MARR", vol, media_uid, get_proof_status(event_date)))
         
-        g_dad = get_by_role(rec, "2")
-        g_mom = get_by_role(rec, "3")
-        if g_dad or g_mom:
-            g_fam = [f"0 @F{fam_uid}G@ FAM"]
-            if g_dad:
-                g_fam.append(f"1 HUSB @I{generate_uid(rec, g_dad, vol)}@")
-            if g_mom:
-                g_fam.append(f"1 WIFE @I{generate_uid(rec, g_mom, vol)}@")
-            g_fam.append(f"1 CHIL @I{generate_uid(rec, primary, vol)}@")
-            fams.append("\n".join(g_fam))
-
-        b_dad = get_by_role(rec, "5")
-        b_mom = get_by_role(rec, "6")
-        if bride and (b_dad or b_mom):
-            b_fam = [f"0 @F{fam_uid}B@ FAM"]
-            if b_dad:
-                b_fam.append(f"1 HUSB @I{generate_uid(rec, b_dad, vol)}@")
-            if b_mom:
-                b_fam.append(f"1 WIFE @I{generate_uid(rec, b_mom, vol)}@")
-            b_fam.append(f"1 CHIL @I{generate_uid(rec, bride, vol)}@")
-            fams.append("\n".join(b_fam))
-            
-    else: 
+        # Utilize the helper to construct parent families for both Bride and Groom
+        add_parent_family("2", "3", "G", primary)
+        if bride:
+            add_parent_family("5", "6", "B", bride)
+    
+    else:
         dad = get_by_role(rec, "2")
         mom = get_by_role(rec, "3")
         if dad:
@@ -747,22 +699,15 @@ def build_family(rec: dict, vol: str, media_uid: str) -> list:
     fams.insert(0, "\n".join([line for line in fam_tag if line]))
     return fams
 
-
 def get_source_root() -> list:
     """Generates the static organization-level source record."""
     return [
         f"0 {CONFIG['root_source_id']} SOUR",
-        f"1 TITL {CONFIG['org_name']}",
-        "1 AUTH", 
-        f"1 PUBL Researcher: {CONFIG['researcher']}.",
-        "1 _WEBTAG", 
-        "2 NAME Facebook Group", 
-        f"2 URL {CONFIG['mgs_group_url']}",
-        "1 _WEBTAG", 
-        "2 NAME Ancestry Group", 
+        f"1 TITL {CONFIG['org_name']}", "1 AUTH",
+        f"1 PUBL Researcher: {CONFIG['researcher']}.", "1 _WEBTAG", "2 NAME Facebook Group",
+        f"2 URL {CONFIG['mgs_group_url']}", "1 _WEBTAG", "2 NAME Ancestry Group",
         f"2 URL {CONFIG['ancestry_group_url']}"
     ]
-
 
 def get_volume_sources(volumes_used: set) -> list:
     """Generates register-specific source records dynamically based on volumes used."""
@@ -774,41 +719,36 @@ def get_volume_sources(volumes_used: set) -> list:
         v_clause = f", Volume {vol}" if vol else ""
         v_title = f"{CONFIG['volume_title']}{v_clause}"
         
-        block = [
-            f"0 {s_id} SOUR", 
+        block = [f"0 {s_id} SOUR",
             f"1 ABBR {CONFIG['parish_name']} {v_title}",
             f"1 REFN {s_id.replace('@S', '').replace('@', '')}",
-            f"1 TITL {CONFIG['parish_name']}, , {CONFIG['register_name']}{v_clause} ; {v_title}, {CONFIG['parish_name']}, {loc_full}.",
-            f"1 _SUBQ {CONFIG['parish_name']} - {loc_full}.",
-            f"1 _BIBL {CONFIG['parish_name']}. {v_title}. {CONFIG['parish_name']}, {loc_full}.",
-            "1 _TMPLT", 
-            "2 TID 355", 
-            "2 FIELD", "3 NAME Church_Author", f"3 VALUE {CONFIG['parish_name']}",
-            "2 FIELD", "3 NAME Title", f"3 VALUE {CONFIG['volume_title']}", 
-            "2 FIELD", "3 NAME Location", f"3 VALUE {loc_full}",
-            "2 FIELD", "3 NAME ChurchLoc", f"3 VALUE {CONFIG['parish_name']}", 
+            f"1 TITL {CONFIG['parish_name']}, , {CONFIG['register_name']}{v_clause} ; "
+            f"{v_title}, {CONFIG['parish_name']}, {loc_full}.",
+            f"1 _SUBQ {CONFIG['parish_name']} - {loc_full}.", f"1 _BIBL {CONFIG['parish_name']}. {v_title}. "
+                                                              f"{CONFIG['parish_name']}, {loc_full}.", "1 _TMPLT",
+            "2 TID 355",
+            "2 FIELD", "3 NAME Church_Author", f"3 VALUE {CONFIG['parish_name']}", "2 FIELD", "3 NAME Title",
+            f"3 VALUE {CONFIG['volume_title']}",
+            "2 FIELD", "3 NAME Location", f"3 VALUE {loc_full}", "2 FIELD", "3 NAME ChurchLoc",
+            f"3 VALUE {CONFIG['parish_name']}",
             "2 FIELD", "3 NAME RegisterName", f"3 VALUE {CONFIG['register_name']}"
         ]
         
         if vol:
             block.extend(["2 FIELD", "3 NAME Volume", f"3 VALUE Volume {vol}"])
             
-        block.extend([
-            "2 FIELD", "3 NAME ArchRegNo", f"3 VALUE {CONFIG['call_number']}", 
-            "2 FIELD", "3 NAME Repository", f"3 VALUE {CONFIG['repository']}",
-            "2 FIELD", "3 NAME RepositoryLoc", f"3 VALUE {CONFIG['repository_loc']}", 
-            "1 _WEBTAG", 
-            f"2 NAME {CONFIG['collection_name']}", 
+        block.extend(["2 FIELD", "3 NAME ArchRegNo", f"3 VALUE {CONFIG['call_number']}",
+            "2 FIELD", "3 NAME Repository", f"3 VALUE {CONFIG['repository']}", "2 FIELD", "3 NAME RepositoryLoc",
+            f"3 VALUE {CONFIG['repository_loc']}", "1 _WEBTAG", f"2 NAME {CONFIG['collection_name']}",
             f"2 URL {CONFIG['collection_url']}"
         ])
         sour_lines.extend(block)
         
     return sour_lines
 
-
 def build_gedcom(json_data: dict) -> str:
     """
-    Main builder orchestrating the conversion from the loaded JSON 
+    Main builder orchestrating the conversion from the loaded JSON
     to a raw GEDCOM string syntax.
     """
     now = datetime.datetime.now()
@@ -824,8 +764,8 @@ def build_gedcom(json_data: dict) -> str:
         f"1 DEST {CONFIG['software_name']}",
         f"1 DATE {gedcom_date}",
         f"2 TIME {now.strftime('%H:%M:%S')}",
-        "1 SUBM @SUBM1@",
-        f"1 COPR Copyright (c) {CONFIG['copyright_start']}-{now.year} {CONFIG['org_name']}. All rights reserved.",
+        "1 SUBM @SUBM1@", f"1 COPR Copyright (c) {CONFIG['copyright_start']}-{now.year} "
+                          f"{CONFIG['org_name']}. All rights reserved.",
         f"1 NOTE {CONFIG['gedcom_note']}",
         f"2 CONC {CONFIG['gedcom_conc']}",
         "1 GEDC",
@@ -851,7 +791,8 @@ def build_gedcom(json_data: dict) -> str:
         
         media_uid = generate_media_uid(meta, vol)
         file_name = clean_val(meta.get('file_name'))
-        media_title = f"{CONFIG['parish_name_short']} - Vol {vol or 'Unknown'} - Page {clean_val(meta.get('pages')) or 'X'}"
+        media_title = (f"{CONFIG['parish_name_short']} - Vol {vol or 'Unknown'} - "
+                       f"Page {clean_val(meta.get('pages')) or 'X'}")
         
         # Build media object if new
         if media_uid not in printed_media:
@@ -860,9 +801,7 @@ def build_gedcom(json_data: dict) -> str:
             if form_type == 'jpeg':
                 form_type = 'jpg'
             
-            media_block = [
-                f"0 @{media_uid}@ OBJE", 
-                f"1 FILE {file_path}", 
+            media_block = [f"0 @{media_uid}@ OBJE", f"1 FILE {file_path}",
                 f"2 FORM {form_type}",
                 f"2 TITL {media_title}"
             ]
@@ -879,16 +818,15 @@ def build_gedcom(json_data: dict) -> str:
                     continue
                 printed_indis.add(uid)
                 
-                indi_block, t_block, flagged, folder = build_individual(
-                    uid, rec, part, vol, media_uid, gedcom_date, 
-                    any_review, file_name, media_title
+                indi_block, t_block, flagged, folder = build_individual(uid, rec, part, vol, media_uid, gedcom_date,
+                    any_review
                 )
                 
                 ged.extend(indi_block)
-                if t_block and folder: 
+                if t_block and folder:
                     task_recs.append(t_block)
                     folder_tasks.setdefault(folder, []).append(f"1 _TASK @T{uid}@")
-                if flagged: 
+                if flagged:
                     review_count += 1
                 
             fam_recs.extend(build_family(rec, vol, media_uid))
@@ -907,10 +845,10 @@ def build_gedcom(json_data: dict) -> str:
     ged.append("0 TRLR")
     
     if review_count > 0:
-        print(f"Flagged {review_count} individual(s) with priority-based Tasks and Folders.")
+        print(f"Flagged {review_count} individual(s) with priority-based "
+              f"Tasks and Folders.")
         
     return "\n".join(ged)
-
 
 if __name__ == "__main__":
     if os.path.exists(CONFIG['master_db']):
@@ -920,7 +858,7 @@ if __name__ == "__main__":
         out_dir = CONFIG.get('gedcom_out_path', '')
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
-            
+        
         final_path = os.path.join(out_dir, CONFIG.get('gedcom_out_name', 'Assumption_Register.ged'))
         
         with open(final_path, 'w', encoding='utf-8') as f:
