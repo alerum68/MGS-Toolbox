@@ -1,0 +1,74 @@
+MGS Toolbox
+
+A collection of Python utilities for advanced genealogy data management, specifically targeting RootsMagic 11 and Family Tree Maker. These scripts bypass standard application interfaces to handle bulk data conversion, spatial/historical data correction, and duplicate identification directly at the database level.
+
+Prerequisites
+
+Python 3.8 or higher is required. It is recommended to run these tools within a virtual environment.
+
+Install the required dependencies:
+
+pip install pandas geopandas shapely thefuzz python-dotenv tqdm google-genai
+
+
+Configuration
+
+Configuration is managed via environment variables. Create a .env file in the root directory of the project to store your local paths, database locations, and API keys. Specific required variables are documented at the top of each script.
+
+Included Utilities
+
+RootsMagic Duplicate Finder (duplicate_finder.py)
+
+Identifies potential duplicate individuals within a RootsMagic 11 database (.rmtree). The script runs a two-pass fuzzy string matching algorithm on names and birth years, cross-referencing immediate family members (spouses, parents, children) to filter out false positives.
+
+Rather than generating an external report, this script injects Task and Folder records directly into the RootsMagic SQLite database. This allows the user to open the software and immediately begin reviewing potential merges via the native Task List.
+
+Usage:
+
+python duplicate_finder.py
+
+
+Note: Includes a test mode limiting the run to the first 100 individuals to verify database write permissions safely.
+
+Historical County Fixer (historical_county_fixer.py)
+
+Evaluates geocoded timeline events against historical county boundaries (using Newberry Atlas shapefiles). If a recorded event falls outside the historical existence of its listed county based on the event date, the script intervenes.
+
+It clones the existing place record, updates the nomenclature to reflect the historically accurate jurisdiction (e.g., converting a county to a territory), and redirects the event. This approach safely preserves the original FamilySearch and Ancestry.com UUIDs and coordinates attached to the root place while correcting the historical display name.
+
+Usage:
+
+python historical_county_fixer.py
+
+
+Census to GEDCOM Converter (census_to_gedcom.py)
+
+Parses transcribed census data from a CSV file and compiles it into a GEDCOM 5.5.1 file. The script uses demographic heuristics (age gaps, surnames, and genders) to infer household structures, automatically linking parents, children, and spouses.
+
+The output format can be toggled to generate software-specific extensions: RootsMagic (utilizing custom task tags and templates) or Family Tree Maker (utilizing standard note tagging). Unverified relationships or data anomalies are automatically flagged for manual review upon import.
+
+Usage:
+
+python census_to_gedcom.py
+
+
+Gemini Cache Cleanup (cleanup_caches.py)
+
+A backend maintenance utility for developers utilizing the Google GenAI API. It authenticates via the GEMINI_API_KEY in your .env file, queries the API for all active context caches, and systematically deletes them to prevent unnecessary storage costs.
+
+Usage:
+
+python cleanup_caches.py
+
+
+Important Notice: Database Interactions
+
+Several of these scripts execute UPDATE, INSERT, and DELETE SQL operations directly against RootsMagic .rmtree files. RootsMagic uses a proprietary SQLite schema and does not expect external modifications while the application is running.
+
+Critical Requirements before running any RootsMagic script:
+
+Ensure the RootsMagic application is completely closed.
+
+Always create a manual backup of your .rmtree file before execution.
+
+The author provides this toolbox "as is" and assumes no liability for database corruption or data loss.

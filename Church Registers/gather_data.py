@@ -1,57 +1,83 @@
-import os
-import sys
+"""
+Historical Register Data Extraction Script.
+
+This script utilizes the Google Gemini API to process images of historical 
+church registers. It extracts handwritten records, translates them into 
+English, and structures the output into a standardized JSON format.
+"""
+
 import json
-import time
-import re
 import math
+import os
+import re
+import sys
+import time
+from pathlib import Path
 from textwrap import dedent
 
-from PIL import Image
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types, errors
+from google.genai import errors, types
+from PIL import Image
 
 # 1. Load variables from .env
-load_dotenv(override=True) 
+load_dotenv(override=True)
 
 # 2. Initialize the GenAI Client
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Configuration from .env
+# Configuration dictionary loaded from environment variables
 CONFIG = {
     "parish_name": os.getenv("PARISH_NAME"),
-    "parish_location": os.getenv("PARISH_LOCATION"),
+    "parish_location": f"{os.getenv('PARISH_CITY', '')}, {os.getenv('PARISH_STATE', '')}".strip(", "),
     "volume_title": os.getenv("VOLUME_TITLE"),
     "volume_num": os.getenv("VOLUME_NUM", ""),
-    
     "api_budget": float(os.getenv("API_BUDGET", "5.00")),
     "cost_per_1m_in": float(os.getenv("COST_PER_1M_INPUT", "0.075")),
     "cost_per_1m_out": float(os.getenv("COST_PER_1M_OUTPUT", "0.30")),
+    "cache_discount_multiplier": float(os.getenv("CACHE_DISCOUNT_MULTIPLIER", "0.10")),
 }
 
-MASTER_DB = os.getenv("MASTER_DB_NAME")
-IMAGE_DIR = os.getenv("IMAGE_SOURCE_DIR")
+# Safely construct absolute paths using pathlib
+PROGRAM_DIR = Path(os.getenv("PROGRAM_DIR", ""))
+MASTER_DB = str(PROGRAM_DIR / os.getenv("JSON_DIR", "") / os.getenv("MASTER_DB_NAME", ""))
+IMAGE_DIR = str(PROGRAM_DIR / os.getenv("IMAGE_DIR", ""))
+
 MODEL_ID = os.getenv("MODEL_NAME")
 DEBUG_FILE = sys.argv[1] if len(sys.argv) > 1 else None
 
-with open("register_schema.json", "r") as f:
-    SCHEMA = json.load(f)
+# Load the JSON schema that the LLM must conform to
+with open("register_schema.json", "r", encoding="utf-8") as schema_file:
+    SCHEMA = json.load(schema_file)
 
-# --- NEW: IMAGE OPTIMIZATION ---
-def optimize_image(image_path, max_dimension=2048):
+
+def optimize_image(image_path: str, max_dimension: int = 2048) -> Image.Image:
     """
-    Downscales images client-side to drastically reduce token costs.
+    Downscale images client-side to drastically reduce token costs.
+    
     2048px is the sweet spot: large enough to perfectly preserve 19th-century 
-    cursive legibility, but small enough to reduce Gemini tile costs by up to 80%.
+    cursive legibility, but small enough to reduce Gemini tile costs.
+
+    Args:
+        image_path (str): The absolute or relative path to the source image.
+        max_dimension (int): The maximum width or height in pixels.
+
+    Returns:
+        Image.Image: The optimized Pillow Image object.
     """
     img = Image.open(image_path)
     # LANCZOS resampling maintains sharp edges for text readability
     img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
     return img
 
-# --- NEW: STATIC CACHED INSTRUCTIONS ---
-def get_cached_system_instruction():
-    """Returns the static, heavy ruleset to be stored in the Context Cache."""
+
+def get_cached_system_instruction() -> str:
+    """
+    Return the static, heavy ruleset to be stored in the Context Cache.
+
+    Returns:
+        str: The full system instruction prompt.
+    """
     return dedent("""
         You are an expert genealogist and translator specializing in 19th-century Catholic parish registers from Métis and French-Canadian communities in the Red River / northern Great Plains region. Extract the historical parish register sheet into JSON.
 
@@ -140,14 +166,36 @@ def get_cached_system_instruction():
         - ANTI-CROSS-POLLINATION: NEVER carry over surnames from adjacent records.
     """)
 
-# --- NEW: DYNAMIC USER PROMPT ---
-def get_dynamic_prompt(file_name, volume, pages_str):
-    """Generates only the dynamic metadata for the specific image being processed."""
+
+def get_dynamic_prompt(file_name: str, volume: str, pages_str: str) -> str:
+    """
+    Generate only the dynamic metadata for the specific image being processed.
+
+    Args:
+        file_name (str): The base name of the image file.
+        volume (str): The register volume number.
+        pages_str (str): The specific page numbers covered by the image.
+
+    Returns:
+        str: The dynamic portion of the LLM prompt.
+    """
     return dedent(f"""
-        Metadata Context: File: {file_name}, Volume: {volume}, Pages: {pages_str}, Church: {CONFIG['parish_name']}, Location: {CONFIG['parish_location']}
+        Metadata Context: 
+        File: {file_name}, 
+        Volume: {volume}, 
+        Pages: {pages_str}, 
+        Church: {CONFIG['parish_name']}, 
+        Location: {CONFIG['parish_location']}
     """)
 
-def run_batch_process():
+
+def run_batch_process() -> None:
+    """
+    Main orchestration loop. Iterates through all images in the source directory,
+    calls the Gemini API, tracks token usage and budget, and appends extracted 
+    records to the local JSON database.
+    """
+    # Load existing master database to track progress and budget
     if os.path.exists(MASTER_DB):
         with open(MASTER_DB, 'r', encoding='utf-8') as f:
             master_data = json.load(f)
@@ -163,29 +211,40 @@ def run_batch_process():
         total_spent = 0.0
         total_pages_processed = 0
 
-    processed_files = {s['document_metadata']['file_name'] for s in master_data.get('sheets', [])}
-    all_images = [f for f in os.listdir(IMAGE_DIR) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.tiff', '.tif'))]
+    processed_files = {
+        s['document_metadata']['file_name'] 
+        for s in master_data.get('sheets', [])
+    }
+    
+    # Gather all valid image files
+    all_images = [
+        f for f in os.listdir(IMAGE_DIR) 
+        if f.lower().endswith(('.jpg', '.jpeg', '.png', '.tiff', '.tif'))
+    ]
 
+    # Handle Debug Mode override
     if DEBUG_FILE:
         if DEBUG_FILE not in all_images:
             print(f"[DEBUG MODE] '{DEBUG_FILE}' not found in {IMAGE_DIR}. Aborting.")
             return
-        print(f"[DEBUG MODE] Processing ONLY '{DEBUG_FILE}' with thinking enabled. Nothing will be saved to {MASTER_DB}.\n")
+        print(
+            f"[DEBUG MODE] Processing ONLY '{DEBUG_FILE}' with thinking enabled. "
+            f"Nothing will be saved to {MASTER_DB}.\n"
+        )
         all_images = [DEBUG_FILE]
 
     total_files = len(all_images)
 
-    # --- NEW: CREATE CONTEXT CACHE BEFORE LOOP ---
     active_cache_name = None
     if not DEBUG_FILE:
         print(f"Found {total_files} images in the source directory.")
-        print(f"Creating Context Cache for System Instructions to reduce costs...")
+        print("Creating Context Cache for System Instructions to reduce costs...")
         try:
             cache = client.caches.create(
                 model=MODEL_ID,
                 config=types.CreateCachedContentConfig(
                     system_instruction=get_cached_system_instruction(),
-                    ttl="86400s", # 24 hours, ensuring it survives the longest batch run
+                    ttl="86400s",  # 24 hours survival
                 )
             )
             active_cache_name = cache.name
@@ -193,169 +252,235 @@ def run_batch_process():
         except Exception as e:
             print(f"Warning: Failed to create cache. Proceeding without it. Error: {e}\n")
 
-    for index, filename in enumerate(all_images, start=1):
-        if not DEBUG_FILE and filename in processed_files:
-            print(f"[{index}/{total_files}] Skipping {filename} (already processed).")
-            continue
+    try:
+        for index, filename in enumerate(all_images, start=1):
+            if not DEBUG_FILE and filename in processed_files:
+                print(f"[{index}/{total_files}] Skipping {filename} (already processed).")
+                continue
 
-        file_base = os.path.splitext(filename)[0]
-        file_ext = os.path.splitext(filename)[1].upper().replace(".", "")
-        if file_ext == "JPG":
-            file_ext = "JPEG"
+            file_base = os.path.splitext(filename)[0]
+            file_ext = os.path.splitext(filename)[1].upper().replace(".", "")
+            if file_ext == "JPG":
+                file_ext = "JPEG"
 
-        print(f"[{index}/{total_files}] Processing {filename} with {MODEL_ID}...", end="", flush=True)
-        pages_str = file_base.split('_')[-1]
+            print(f"[{index}/{total_files}] Processing {filename} with {MODEL_ID}...", 
+                  end="", flush=True)
+                  
+            pages_str = file_base.split('_')[-1]
 
-        try:
-            # Downscale image client-side to save tokens
-            img = optimize_image(os.path.join(IMAGE_DIR, filename))
-            prompt = get_dynamic_prompt(file_base, CONFIG['volume_num'], pages_str)
+            try:
+                # Downscale image client-side to save tokens
+                img = optimize_image(os.path.join(IMAGE_DIR, filename))
+                prompt = get_dynamic_prompt(file_base, CONFIG['volume_num'], pages_str)
 
-            if DEBUG_FILE:
-                # Cache cannot be used with thinking mode enabled in current API limits, 
-                # so we append the static instructions directly for debug runs.
-                prompt = get_cached_system_instruction() + "\n\n" + prompt
-                gen_config_kwargs = dict(
-                    thinking_config=types.ThinkingConfig(include_thoughts=True),
-                )
-                prompt += (
-                    "\n\nOUTPUT FORMAT: Respond with ONLY raw JSON matching this "
-                    "schema, no markdown code fences, no commentary before or "
-                    f"after:\n{json.dumps(SCHEMA)}"
-                )
-            else:
-                gen_config_kwargs = dict(
-                    response_mime_type="application/json",
-                    response_schema=SCHEMA,
-                )
-                if active_cache_name:
-                    gen_config_kwargs["cached_content"] = active_cache_name
-
-            max_retries = 10
-            attempts = 0
-            success = False
-
-            while attempts < max_retries and not success:
-                try:
-                    response = client.models.generate_content(
-                        model=MODEL_ID,
-                        contents=[prompt, img],
-                        config=types.GenerateContentConfig(**gen_config_kwargs)
+                if DEBUG_FILE:
+                    # Cache cannot be used with thinking mode enabled in current API
+                    prompt = get_cached_system_instruction() + "\n\n" + prompt
+                    gen_config_kwargs = dict(
+                        thinking_config=types.ThinkingConfig(include_thoughts=True),
                     )
+                    prompt += (
+                        "\n\nOUTPUT FORMAT: Respond with ONLY raw JSON matching this "
+                        "schema, no markdown code fences, no commentary before or "
+                        f"after:\n{json.dumps(SCHEMA)}"
+                    )
+                else:
+                    gen_config_kwargs = dict(
+                        response_mime_type="application/json",
+                        response_schema=SCHEMA,
+                    )
+                    if active_cache_name:
+                        gen_config_kwargs["cached_content"] = active_cache_name
 
-                    if DEBUG_FILE:
-                        thought_parts = [
-                            p.text for p in response.candidates[0].content.parts
-                            if getattr(p, "thought", False)
-                        ]
-                        if thought_parts:
-                            print("\n\n--- MODEL THINKING ---")
-                            print("\n".join(thought_parts))
-                            print("--- END THINKING ---\n")
+                max_retries = 10
+                max_json_retries = 3
+                attempts = 0
+                json_attempts = 0
+                success = False
+                gave_up_early = None
 
-                    raw_text = response.text.strip()
-                    backticks = "`" * 3
-                    if raw_text.startswith(backticks):
-                        raw_text = re.sub(r"^" + backticks + r"(?:json)?\s*|\s*" + backticks + r"$", "", raw_text.strip())
+                while attempts < max_retries and not success:
+                    try:
+                        response = client.models.generate_content(
+                            model=MODEL_ID,
+                            contents=[prompt, img],
+                            config=types.GenerateContentConfig(**gen_config_kwargs)
+                        )
+
+                        # Extract model's internal reasoning if in debug mode
+                        if DEBUG_FILE:
+                            thought_parts = [
+                                p.text for p in response.candidates[0].content.parts
+                                if getattr(p, "thought", False)
+                            ]
+                            if thought_parts:
+                                print("\n\n--- MODEL THINKING ---")
+                                print("\n".join(thought_parts))
+                                print("--- END THINKING ---\n")
+
+                        # Clean output and parse JSON
+                        raw_text = response.text.strip()
+                        backticks = "`" * 3
+                        if raw_text.startswith(backticks):
+                            # Remove markdown code fences if model stubbornly includes them
+                            regex_pattern = r"^" + backticks + r"(?:json)?\s*|\s*" + backticks + r"$"
+                            raw_text = re.sub(regex_pattern, "", raw_text.strip())
                     
-                    page_data = json.loads(raw_text)
-
-                    usage = response.usage_metadata
-                    if usage:
-                        # 1. Extract all three token buckets
-                        in_tokens = getattr(usage, 'prompt_token_count', 0)
-                        out_tokens = getattr(usage, 'candidates_token_count', 0)
-                        cached_tokens = getattr(usage, 'cached_content_token_count', 0)
-                        
-                        # 2. Calculate costs (assuming Cache is ~25% of standard input cost)
-                        cost_cached = (cached_tokens / 1_000_000) * (CONFIG["cost_per_1m_in"] * 0.25)
-                        cost_in = (in_tokens / 1_000_000) * CONFIG["cost_per_1m_in"]
-                        cost_out = (out_tokens / 1_000_000) * CONFIG["cost_per_1m_out"]
-                        
-                        call_cost = cost_cached + cost_in + cost_out
-                        total_spent += call_cost
-                        total_pages_processed += 1
-                        
-                        avg_cost_per_page = total_spent / total_pages_processed if total_pages_processed > 0 else 0
-                        load_dotenv(override=True)
-                        live_budget = float(os.getenv("API_BUDGET", CONFIG["api_budget"]))
-                        remaining_budget = max(0.0, CONFIG["api_budget"] - total_spent)
-                        estimated_pages_left = math.floor(remaining_budget / avg_cost_per_page) if avg_cost_per_page > 0 else 0
-
-                    for sheet in page_data.get("sheets", []):
-                        if "document_metadata" not in sheet:
-                            sheet["document_metadata"] = {}
-                        sheet["document_metadata"]["file_name"] = filename
-                        sheet["document_metadata"]["file_type"] = file_ext
-                        sheet["document_metadata"]["volume"] = CONFIG['volume_num']
-
-                    if DEBUG_FILE:
-                        print("--- EXTRACTED JSON (not saved to master DB) ---")
-                        print(json.dumps(page_data, indent=2, ensure_ascii=False))
-                        if usage:
-                            total_tokens = cached_tokens + in_tokens + out_tokens
-                            print(f" DONE! ✓ (debug) | Call Cost: ${call_cost:.4f} | Total Spent: ${total_spent:.4f} | Remaining: ${remaining_budget:.2f}")
-                            print(f"      Tokens -> Cached: {cached_tokens} | Input: {in_tokens} | Output/Think: {out_tokens} = Total: {total_tokens}")
-                        else:
-                            print(" DONE! ✓ (debug run)")
-                    else:
-                        master_data["sheets"].extend(page_data.get("sheets", []))
-                        
-                        master_data["total_spent"] = total_spent
-                        master_data["total_pages_processed"] = total_pages_processed
-                        
-                        with open(MASTER_DB, 'w', encoding='utf-8') as f:
-                            json.dump(master_data, f, indent=2, ensure_ascii=False)
+                        page_data = json.loads(raw_text)
+                        usage = response.usage_metadata
 
                         if usage:
-                            total_tokens = cached_tokens + in_tokens + out_tokens
-                            print(f" DONE! ✓ | Cost: ${call_cost:.4f}")
-                            print(f"      Tokens -> Cached: {cached_tokens} | Input: {in_tokens} | Output/Think: {out_tokens} = Total: {total_tokens}")
-                            print(f"      Budget -> Total Spent: ${total_spent:.4f} | Est Pages Left: ~{estimated_pages_left}")
-                        else:
-                            print(" DONE! ✓")
+                            # 1. Extract all token buckets
+                            in_tokens = getattr(usage, 'prompt_token_count', 0)
+                            out_tokens = getattr(usage, 'candidates_token_count', 0)
+                            cached_tokens = getattr(usage, 'cached_content_token_count', 0)
+                            thoughts_tokens = getattr(usage, 'thoughts_token_count', 0)
 
-                    success = True
+                            # 2. Calculate costs
+                            cache_rate = CONFIG["cost_per_1m_in"] * CONFIG["cache_discount_multiplier"]
+                            cost_cached = (cached_tokens / 1_000_000) * cache_rate
+                            cost_in = (in_tokens / 1_000_000) * CONFIG["cost_per_1m_in"]
+                            cost_out = ((out_tokens + thoughts_tokens) / 1_000_000) * CONFIG["cost_per_1m_out"]
+                        
+                            call_cost = cost_cached + cost_in + cost_out
+                            total_spent += call_cost
+                            total_pages_processed += 1
+                        
+                            # Determine run-rate and remaining budget
+                            avg_cost_per_page = (
+                                total_spent / total_pages_processed 
+                                if total_pages_processed > 0 else 0
+                            )
+                            load_dotenv(override=True)
+                            live_budget = float(os.getenv("API_BUDGET", CONFIG["api_budget"]))
+                            remaining_budget = max(0.0, live_budget - total_spent)
+                            estimated_pages_left = (
+                                math.floor(remaining_budget / avg_cost_per_page) 
+                                if avg_cost_per_page > 0 else 0
+                            )
+
+                        # Inject document metadata back into each parsed sheet
+                        for sheet in page_data.get("sheets", []):
+                            if "document_metadata" not in sheet:
+                                sheet["document_metadata"] = {}
+                            sheet["document_metadata"]["file_name"] = filename
+                            sheet["document_metadata"]["file_type"] = file_ext
+                            sheet["document_metadata"]["volume"] = CONFIG['volume_num']
+
+                        if DEBUG_FILE:
+                            print("--- EXTRACTED JSON (not saved to master DB) ---")
+                            print(json.dumps(page_data, indent=2, ensure_ascii=False))
+                            if usage:
+                                total_tokens = (
+                                    getattr(usage, 'total_token_count', None) 
+                                    or (cached_tokens + in_tokens + out_tokens + thoughts_tokens)
+                                )
+                                print(
+                                    f" DONE! ✓ (debug) | Call Cost: ${call_cost:.4f} | "
+                                    f"Total Spent: ${total_spent:.4f} | Remaining: ${remaining_budget:.2f}"
+                                )
+                                print(
+                                    f"      Tokens -> Cached: {cached_tokens} | "
+                                    f"Input: {in_tokens} | Output: {out_tokens} | "
+                                    f"Thinking: {thoughts_tokens} = Total: {total_tokens}"
+                                )
+                            else:
+                                print(" DONE! ✓ (debug run)")
+                        else:
+                            # Append to master dataset
+                            master_data["sheets"].extend(page_data.get("sheets", []))
+                            master_data["total_spent"] = total_spent
+                            master_data["total_pages_processed"] = total_pages_processed
+                            
+                            # Ensure the parent directory exists before saving
+                            os.makedirs(os.path.dirname(MASTER_DB), exist_ok=True)
+                            
+                            with open(MASTER_DB, 'w', encoding='utf-8') as f:
+                                json.dump(master_data, f, indent=2, ensure_ascii=False)
+
+                            if usage:
+                                total_tokens = (
+                                    getattr(usage, 'total_token_count', None) 
+                                    or (cached_tokens + in_tokens + out_tokens + thoughts_tokens)
+                                )
+                                print(f" DONE! ✓ | Cost: ${call_cost:.4f}")
+                                print(
+                                    f"      Tokens -> Cached: {cached_tokens} | "
+                                    f"Input: {in_tokens} | Output: {out_tokens} | "
+                                    f"Thinking: {thoughts_tokens} = Total: {total_tokens}"
+                                )
+                                print(
+                                    f"      Budget -> Total Spent: ${total_spent:.4f} | "
+                                    f"Est Pages Left: ~{estimated_pages_left}"
+                                )
+                            else:
+                                print(" DONE! ✓")
+
+                        success = True
                 
-                except json.JSONDecodeError as e:
-                    print(f"\n   [!] Malformed JSON generated. Retrying... ({e})", end="", flush=True)
-                    time.sleep(2)
-                    attempts += 1
+                    except json.JSONDecodeError as e:
+                        json_attempts += 1
+                        print(f"\n   [!] Malformed JSON generated. Retrying... ({e})", 
+                              end="", flush=True)
+                        if json_attempts >= max_json_retries:
+                            gave_up_early = (
+                                f"malformed JSON {max_json_retries}x in a row "
+                                "(likely a systemic issue, not transient)"
+                            )
+                            break
+                        time.sleep(2)
+                        attempts += 1
 
-                except errors.ClientError as api_error:
-                    error_msg = str(api_error)
+                    except errors.ClientError as api_error:
+                        error_msg = str(api_error)
 
-                    if "PerDay" in error_msg:
-                        print(f"\n\n[FATAL ERROR] Daily Quota Exhausted.")
-                        print("Progress saved. Exiting script to prevent infinite crashing.")
-                        return
+                        if "PerDay" in error_msg:
+                            print("\n\n[FATAL ERROR] Daily Quota Exhausted.")
+                            print("Progress saved. Exiting script to prevent infinite crashing.")
+                            return
 
-                    elif "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                        match = re.search(r"retry in (\d+\.?\d*)s", error_msg)
-                        if match:
-                            wait_time = float(match.group(1)) + 1.5
+                        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                            match = re.search(r"retry in (\d+\.?\d*)s", error_msg)
+                            if match:
+                                wait_time = float(match.group(1)) + 1.5
+                            else:
+                                # Exponential backoff: 35s, 70s, 140s...
+                                wait_time = 35.0 * (2 ** attempts) 
+                        
+                            print(f"\n   [!] Rate limit hit. Sleeping {wait_time:.2f}s "
+                                  f"(Attempt {attempts + 1})...", end="", flush=True)
+                            time.sleep(wait_time)
+                            attempts += 1
+                        
+                        elif "500" in error_msg or "503" in error_msg or "504" in error_msg:
+                            print(f"\n   [!] Google Server Error ({error_msg[:30]}). "
+                                  "Sleeping 5s...", end="", flush=True)
+                            time.sleep(5)
+                            attempts += 1
+
                         else:
-                            # Exponential backoff: 35s, 70s, 140s...
-                            wait_time = 35.0 * (2 ** attempts) 
-                        
-                        print(f"\n   [!] Rate limit hit. Sleeping {wait_time:.2f}s (Attempt {attempts + 1})...", end="", flush=True)
-                        time.sleep(wait_time)
-                        attempts += 1
-                        
-                    elif "500" in error_msg or "503" in error_msg or "504" in error_msg:
-                        print(f"\n   [!] Google Server Error ({error_msg[:30]}). Sleeping 5s...", end="", flush=True)
-                        time.sleep(5)
-                        attempts += 1
+                            print(f" API ERROR! ✗\nDetails: {error_msg}")
+                            break
 
-                    else:
-                        print(f" API ERROR! ✗\nDetails: {error_msg}")
-                        break
+                if not success:
+                    if gave_up_early:
+                        print(f"\n[{index}/{total_files}] SKIPPED: {filename} — {gave_up_early}.")
+                    elif attempts >= max_retries:
+                        print(f"\n[{index}/{total_files}] FAILED: {filename} exhausted all {max_retries} retries.")
 
-            if not success and attempts >= max_retries:
-                print(f"\n[{index}/{total_files}] FAILED: {filename} exhausted all {max_retries} retries.")
+            except Exception as e:
+                # Catch broad local exceptions (e.g., Pillow image read errors)
+                print(f" LOCAL ERROR! ✗\nDetails: {e}")
+                
+    finally:
+        if active_cache_name:
+            try:
+                client.caches.delete(active_cache_name)
+                print(f"\nDeleted context cache: {active_cache_name}")
+            except Exception as e:
+                print(f"\nWarning: Failed to delete cache {active_cache_name} "
+                      f"(it will expire on its own via TTL). Error: {e}")
 
-        except Exception as e:
-            print(f" LOCAL ERROR! ✗\nDetails: {e}")
 
 if __name__ == "__main__":
     run_batch_process()
