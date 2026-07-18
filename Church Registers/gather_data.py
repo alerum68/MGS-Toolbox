@@ -99,7 +99,7 @@ def get_cached_system_instruction() -> str:
 
         2. CHARACTERS
         - English letters/numbers only (A-Z, a-z, 0-9) in Fact fields, including "English translation". Strip all diacritics/accents.
-        - Only "raw" fields, and "Original Transcription" should retain diacritics/accdents.
+        - Only "raw" fields, and "Original Transcription" should retain diacritics/accents.
         - Margin numbers are load-bearing identifiers. Read each digit individually.
 
         3. NAMES & PRE-COMPUTATION VERIFICATION
@@ -189,6 +189,7 @@ def get_dynamic_prompt(file_name: str, volume: str, pages_str: str) -> str:
     """)
 
 
+# noinspection GrazieInspection
 def run_batch_process() -> None:
     """
     Main orchestration loop. Iterates through all images in the source directory,

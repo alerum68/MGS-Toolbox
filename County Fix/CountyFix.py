@@ -5,7 +5,8 @@ This script updates a RootsMagic database by analyzing geocoded timeline markers
 and comparing them against historical shapefiles (like the Newberry Atlas).
 It intelligently forks existing places, updating their display names to reflect
 the correct historical county or territory boundaries active on the date of
-the event, while preserving original FamilySearch and Ancestry.com tracking IDs and coordinates.
+the event, while preserving original FamilySearch and Ancestry.com tracking IDs
+and coordinates.
 """
 
 import calendar
@@ -15,7 +16,7 @@ import re
 import shutil
 import sqlite3
 import warnings
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional
 
 import geopandas as gpd
 from dotenv import load_dotenv
@@ -42,7 +43,8 @@ RM_DATABASE = _rm_db if os.path.isabs(_rm_db) else os.path.join(PROGRAM_DIR, _rm
 # Resolve shapefile path
 _shape = os.getenv(
     "COUNTY_SHAPEFILE",
-    "Python/County FIx/US_AtlasHCB_Counties/US_HistCounties_Shapefile/US_HistCounties.shp"
+    "Python/County FIx/US_AtlasHCB_Counties/US_HistCounties_Shapefile/"
+    "US_HistCounties.shp"
 )
 SHAPEFILE_PATH = _shape if os.path.isabs(_shape) else os.path.join(PROGRAM_DIR, _shape)
 
@@ -104,12 +106,7 @@ def update_ui() -> None:
 
 
 def debug_print(message: str) -> None:
-    """
-    Print debug messages cleanly on a new line above the static progress bar.
-
-    Args:
-        message (str): The debug message to print.
-    """
+    """Print debug messages cleanly on a new line above the static progress bar."""
     if not DEBUG_MODE:
         return
 
@@ -120,15 +117,7 @@ def debug_print(message: str) -> None:
 
 
 def parse_rm_date(date_str: str) -> Optional[str]:
-    """
-    Parse RootsMagic proprietary date strings into standard YYYY-MM-DD format.
-
-    Args:
-        date_str (str): The raw date string from the database.
-
-    Returns:
-        Optional[str]: Formatted date string, or None if invalid/unparseable.
-    """
+    """Parse RootsMagic proprietary date strings into standard YYYY-MM-DD format."""
     if not date_str or date_str == '.':
         return None
 
@@ -136,10 +125,10 @@ def parse_rm_date(date_str: str) -> Optional[str]:
 
     # D-format: Typically D.[+/-][YYYY][MM][DD]
     if date_str.startswith('D'):
-        m = DATE_PATTERN_D.match(date_str)
-        if not m:
+        m_match = DATE_PATTERN_D.match(date_str)
+        if not m_match:
             return None
-        sign, y_str, mo_str, d_str = m.groups()
+        sign, y_str, mo_str, d_str = m_match.groups()
         if sign == '-':  # Skip BC dates for historical county tracking
             return None
         year, month, day = int(y_str), int(mo_str), int(d_str)
@@ -177,25 +166,13 @@ def parse_rm_date(date_str: str) -> Optional[str]:
 
 
 def extract_local_parts(place_name: str) -> str:
-    """
-    Intelligently extract the local city/town from a place name string.
-
-    Completely strips redundant state, county, or country suffixes that would
-    cause compound errors during reconstruction.
-
-    Args:
-        place_name (str): The original full place string.
-
-    Returns:
-        str: The isolated local city/town name, or an empty string.
-    """
+    """Intelligently extract the local city/town from a place name string."""
     if not place_name:
         return ""
 
     parts = [p.strip() for p in place_name.split(',')]
 
     # Short places (e.g., "Minnesota, USA" or "United States")
-    # If the first part is a state/country, there is no local city.
     if len(parts) <= 2:
         if parts[0].lower() in US_STATES:
             return ""
@@ -214,18 +191,7 @@ def extract_local_parts(place_name: str) -> str:
 
 
 def clean_shapefile_name(name: str) -> str:
-    """
-    Clean historical names extracted from the shapefile dataset.
-
-    Forces ALL CAPS shapefile data into clean Title Case and expands
-    shorthand abbreviations into standard genealogical terms.
-
-    Args:
-        name (str): The raw string from the shapefile.
-
-    Returns:
-        str: The cleaned and expanded place name.
-    """
+    """Clean historical names extracted from the shapefile dataset."""
     if not name:
         return ""
 
@@ -248,18 +214,7 @@ def clean_shapefile_name(name: str) -> str:
 
 
 def create_reverse_place(place_name: str) -> str:
-    """
-    Reverse the comma-separated parts of a place name.
-
-    Used by RootsMagic to create the 'Reverse' column in the PlaceTable for
-    sorting places geographically (e.g., "USA, North Dakota, Pembina").
-
-    Args:
-        place_name (str): The standard place name.
-
-    Returns:
-        str: The reversed place name.
-    """
+    """Reverse the comma-separated parts of a place name."""
     if not place_name:
         return ""
     parts = [part.strip() for part in place_name.split(',')]
@@ -276,21 +231,7 @@ def clone_historical_place(
     new_place_name: str,
     columns: List[str]
 ) -> int:
-    """
-    Clone a place record, maintaining coordinates and UUIDs, with a new name.
-
-    Checks if the new place already exists to avoid duplicates.
-
-    Args:
-        cursor (sqlite3.Cursor): The active database cursor.
-        original_place_id (int): The PlaceID of the template record.
-        new_place_name (str): The corrected historical name.
-        columns (List[str]): List of all columns in the PlaceTable.
-
-    Returns:
-        int: The PlaceID of the new or existing historical place.
-    """
-    # Check if the target place name already exists
+    """Clone a place record, maintaining coordinates and UUIDs, with a new name."""
     cursor.execute(
         "SELECT PlaceID FROM PlaceTable WHERE Name = ?",
         (new_place_name,)
@@ -302,7 +243,6 @@ def clone_historical_place(
         )
         return result[0]
 
-    # Fetch the original place data to use as a template
     cursor.execute(
         "SELECT * FROM PlaceTable WHERE PlaceID = ?",
         (original_place_id,)
@@ -315,10 +255,9 @@ def clone_historical_place(
 
     new_reverse_name = create_reverse_place(new_place_name)
 
-    # Build the insert query dynamically, replacing name and reverse name
     for col, val in zip(columns, original_data):
         if col == 'PlaceID':
-            continue  # Let SQLite auto-increment the ID
+            continue
         elif col == 'Name':
             insert_cols.append(col)
             insert_vals.append(new_place_name)
@@ -348,23 +287,10 @@ def get_or_create_place_detail(
     original_site_id: int,
     columns: List[str]
 ) -> int:
-    """
-    Clone a place detail (like a hospital or church) to the newly created place.
-
-    Args:
-        cursor (sqlite3.Cursor): The active database cursor.
-        new_place_id (int): The MasterID linking to the parent place.
-        detail_name (str): The name of the detail location.
-        original_site_id (int): The PlaceID of the original detail record.
-        columns (List[str]): List of all columns in the PlaceTable.
-
-    Returns:
-        int: The SiteID (PlaceID) of the new or existing detail record.
-    """
+    """Clone a place detail (like a hospital or church) to the new place."""
     if not detail_name:
         return 0
 
-    # PlaceType = 2 denotes a place detail in RootsMagic
     cursor.execute("""
         SELECT PlaceID FROM PlaceTable
         WHERE MasterID = ? AND Name = ? AND PlaceType = 2
@@ -409,16 +335,9 @@ def get_or_create_place_detail(
 # MAIN EXECUTION
 # ==========================================
 def main() -> None:
-    """
-    Main execution loop for the historical county fixer.
-
-    Loads spatial data, iterates over timeline events in the RootsMagic database,
-    cross-references dates and coordinates with historical polygons, and forks
-    places if a historical mismatch is found.
-    """
+    """Main execution loop for the historical county fixer."""
     print("Loading Newberry Historical Shapefiles...")
     try:
-        # Load the shapefile and convert coordinate reference system to standard GPS
         gdf = gpd.read_file(SHAPEFILE_PATH).to_crs("EPSG:4326")
         print("Shapefiles loaded.\n")
     except Exception as e:
@@ -438,21 +357,18 @@ def main() -> None:
     print(f"Connecting to Database: {RM_DATABASE}")
     conn = sqlite3.connect(RM_DATABASE)
 
-    # Register RootsMagic's custom collation sequence to prevent SQL errors
-    def rmnocase_collation(a: str, b: str) -> int:
-        a, b = a.lower(), b.lower()
-        if a == b:
+    def rmnocase_collation(a_str: str, b_str: str) -> int:
+        a_str, b_str = a_str.lower(), b_str.lower()
+        if a_str == b_str:
             return 0
-        return -1 if a < b else 1
+        return -1 if a_str < b_str else 1
 
     conn.create_collation("RMNOCASE", rmnocase_collation)
     cursor = conn.cursor()
 
-    # Retrieve table schema dynamically to ensure compatibility across RM versions
     cursor.execute("PRAGMA table_info(PlaceTable)")
     place_table_columns = [row[1] for row in cursor.fetchall()]
 
-    # Fetch all geocoded events mapped to a place
     query = """
         SELECT e.EventID, e.Date, p.PlaceID, p.Name, p.Latitude, p.Longitude,
                e.SiteID, pd.Name AS DetailName
@@ -465,7 +381,6 @@ def main() -> None:
     cursor.execute(query)
     events = cursor.fetchall()
 
-    # Enable ANSI escape sequences on Windows terminals
     if os.name == 'nt':
         os.system('')
 
@@ -480,7 +395,6 @@ def main() -> None:
         "{n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}"
     )
 
-    # mininterval=0.2 throttles the redraws to prevent GUI flickering
     with tqdm(
         events, desc="Mapping", bar_format=custom_format, colour="green",
         dynamic_ncols=True, mininterval=0.2
@@ -494,22 +408,19 @@ def main() -> None:
                 debug_print(f"[{current_name}] No usable date")
                 continue
 
-            # Filter shapefiles down to polygons active on the event date
             try:
                 active_polygons = gdf[
                     (gdf['START_DATE'] <= target_date) &
                     (gdf['END_DATE'] >= target_date)
                 ]
-            except Exception as e:
-                debug_print(f"[{current_name}] Bad date compare ({e})")
+            except Exception as date_error:
+                debug_print(f"[{current_name}] Bad date compare ({date_error})")
                 continue
 
-            # RM stores coordinates internally multiplied by 10,000,000
             real_lat = lat / 1e7
             real_lon = lon / 1e7
             target_point = Point(real_lon, real_lat)
 
-            # Perform the spatial point-in-polygon check
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 matched_mask = active_polygons.geometry.contains(target_point)
@@ -521,14 +432,10 @@ def main() -> None:
                 )
                 continue
 
-            # 1. Extract local city cleanly
             local_city = extract_local_parts(current_name)
-
-            # 2. Fix capitalization and abbreviations from Shapefile
             county_val = clean_shapefile_name(matched.iloc[0]['NAME'])
             state_val = clean_shapefile_name(matched.iloc[0]['STATE_TERR'])
 
-            # 3. Smart County Processing (Handles unorganized territories and pseudo-counties)
             final_county = ""
             lower_county = county_val.lower()
             pseudo_keywords = [
@@ -536,10 +443,8 @@ def main() -> None:
                 'boundary', 'ext', 'dist', 'district', 'tract', 'reserve'
             ]
 
-            # If the county is just the state name repeated (e.g. Unorganized State Land)
             if lower_county == state_val.lower():
                 final_county = ""
-            # If it contains pseudo-county keywords, don't blindly append "County"
             elif any(kw in lower_county for kw in pseudo_keywords):
                 final_county = county_val
             else:
@@ -548,7 +453,6 @@ def main() -> None:
                 else:
                     final_county = f"{county_val} County"
 
-            # 4. Construct the pristine new place string
             components = []
             if local_city:
                 components.append(local_city)
@@ -560,16 +464,13 @@ def main() -> None:
 
             new_place_name = ", ".join(components)
 
-            # 5. Database update sequence if the name requires a change
             if new_place_name != current_name:
-                # Fork the main place record
                 new_place_id = clone_historical_place(
                     cursor, place_id, new_place_name, place_table_columns
                 )
 
                 new_site_id = 0
                 if site_id and site_id > 0 and detail_name:
-                    # Fork the associated site/detail record (if present)
                     new_site_id = get_or_create_place_detail(
                         cursor, new_place_id, detail_name, site_id,
                         place_table_columns
@@ -577,7 +478,6 @@ def main() -> None:
                 else:
                     new_site_id = site_id
 
-                # Redirect the specific historical event to the newly forked place
                 cursor.execute("""
                     UPDATE EventTable
                     SET PlaceID = ?, SiteID = ?
@@ -587,7 +487,6 @@ def main() -> None:
                 _updated_count += 1
                 update_ui()
 
-                # Print cleanly above the bar without disrupting the UI
                 bar.write(
                     f"\033[92m[✓ FORKED]\033[0m Event {event_id} "
                     f"[{target_date}] | \033[91m{current_name}\033[0m -> "
@@ -609,3 +508,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    

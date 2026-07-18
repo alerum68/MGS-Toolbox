@@ -72,3 +72,4 @@ def cleanup_all_caches() -> None:
 if __name__ == "__main__":
     # Execute the cleanup function when the script is run directly
     cleanup_all_caches()
+    

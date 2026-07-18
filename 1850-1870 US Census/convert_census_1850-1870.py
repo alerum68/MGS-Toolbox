@@ -250,6 +250,7 @@ def spouse_evaluation(
     return True, 0.4, "surname missing for one party -- unverified pairing"
 
 
+# noinspection GrazieInspection
 def child_evaluation(
     unit: Dict[str, Any], member: pd.Series
 ) -> Tuple[bool, float, str]:
@@ -353,6 +354,7 @@ def find_parent(
     return best
 
 
+# noinspection GrazieInspection
 def parse_household(
     group: pd.DataFrame
 ) -> Tuple[List[Dict[str, Any]], List[pd.Series], List[Dict[str, Any]]]:
@@ -635,6 +637,7 @@ def get_census_notes(row: pd.Series) -> List[str]:
     return notes
 
 
+# noinspection GrazieInspection
 def build_relationship_task(
     row: pd.Series,
     rec_id: int,

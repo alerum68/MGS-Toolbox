@@ -177,6 +177,7 @@ def get_proof_status(date_str: str) -> str:
     return "proven"
 
 
+# noinspection GrazieInspection
 def estimate_birth_from_age(event_date: str, age_str: str) -> str:
     """
     Calculates an estimated birth date based on event date precision 

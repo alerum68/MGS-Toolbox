@@ -250,7 +250,8 @@ class ModularToolbox(ctk.CTk):
         self._build_tabs()
         
         self.select_tab("Church Register")
-
+    
+    # noinspection SpellCheckingInspection
     def _build_layout(self):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
@@ -534,7 +535,8 @@ class ModularToolbox(ctk.CTk):
         target_cwd = os.path.dirname(target_script_path) if os.path.exists(target_script_path) else None
 
         threading.Thread(target=self._run_subprocess, args=(args, run_env, target_cwd, on_complete), daemon=True).start()
-
+    
+    # noinspection SpellCheckingInspection
     def _run_subprocess(self, safe_cmd, run_env, target_cwd, on_complete):
         """Runs the background process, handles unicode streams, and captures inputs natively."""
         import io
@@ -594,7 +596,8 @@ class ModularToolbox(ctk.CTk):
             else:
                 self.console_input.configure(state="disabled")
                 self.cancel_btn.configure(state="disabled")
-
+    
+    # noinspection SpellCheckingInspection
     def _recursive_state(self, widget, state):
         """Recursively steps through CTk widgets to toggle interactability."""
         if isinstance(widget, ctk.CTkButton):
