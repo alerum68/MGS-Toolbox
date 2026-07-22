@@ -10,8 +10,7 @@ Python 3.8+
 
 TamperMonkey (Browser Extension)
 
-Atlas of Historical County Boundaries (
-Newberry) – https://publications.newberry.org/ahcb/downloads/gis/US_AtlasHCB_Counties.zip
+Newberry Atlas of Historical County Boundaries – https://publications.newberry.org/ahcb/downloads/gis/US_AtlasHCB_Counties.zip
 Extract to a subfolder in the same directory as CountyFix.py.
 
 Installation:
@@ -23,11 +22,11 @@ Install CensusExtractor.js inside your browser's TamperMonkey dashboard.
 
 ⚙️ Configuration & The GUI
 
-You no longer need to manually edit .env files if running from the Toolbox (though they have been left in so individual
+You con'g need to manually edit .env files if running from the Toolbox (though they have been left in so individual
 scripts can still be run from the CLI). Simply launch the main GUI to securely manage all settings, API keys, and
 directory paths:
 
-python ModularToolbox.py
+python MGS-Toolbox.py
 
 The GUI automatically generates and updates your local .env file and passes the necessary dynamic variables to the
 background scripts. All script outputs and progress bars route directly into the GUI console. (Note: If you prefer
