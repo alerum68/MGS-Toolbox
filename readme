@@ -22,7 +22,7 @@ Install CensusExtractor.js inside your browser's TamperMonkey dashboard.
 
 ⚙️ Configuration & The GUI
 
-You con'g need to manually edit .env files if running from the Toolbox (though they have been left in so individual
+You don't need to manually edit .env files if running from the Toolbox (though they have been left in so individual
 scripts can still be run from the CLI). Simply launch the main GUI to securely manage all settings, API keys, and
 directory paths:
 
